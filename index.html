@@ -1,0 +1,3581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>RoomScan — measure a room, get a 3D model</title>
+<style>
+/* css/app.css */
+:root{
+  --bg:#0f1115; --bg2:#171a21; --bg3:#1f242e; --line:#2b3240;
+  --fg:#e8ecf3; --fg2:#9aa5b6; --acc:#39d0a8; --acc2:#2b7fff;
+  --warn:#ffb64d; --bad:#ff5d5d; --ok:#39d0a8;
+  --tab:56px; --top:52px;
+  --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden}
+body{
+  background:var(--bg); color:var(--fg);
+  font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  overscroll-behavior:none; touch-action:manipulation; user-select:none;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
+button:active{transform:translateY(1px)}
+button.primary{background:var(--acc);color:#04211a;border-color:transparent;font-weight:650}
+button.blue{background:var(--acc2);color:#fff;border-color:transparent;font-weight:600}
+button.ghost{background:transparent}
+button.danger{background:#3a1f24;border-color:#5c2b32;color:#ffb9b9}
+button:disabled{opacity:.4}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;user-select:text}
+input[type=range]{padding:0}
+a{color:var(--acc)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+/* ---------- shell ---------- */
+#top{
+  position:fixed;top:0;left:0;right:0;height:calc(var(--top) + var(--sat));
+  padding:var(--sat) 10px 0;display:flex;align-items:center;gap:8px;
+  background:linear-gradient(#171a21,#141821);border-bottom:1px solid var(--line);z-index:40
+}
+#top .title{font-weight:650;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#top .chip{font-size:12px;color:var(--fg2);background:var(--bg3);border:1px solid var(--line);border-radius:99px;padding:3px 9px;white-space:nowrap}
+#top .chip b{color:var(--fg)}
+#top button{padding:6px 10px;font-size:13px}
+
+#main{position:fixed;top:calc(var(--top) + var(--sat));bottom:calc(var(--tab) + var(--sab));left:0;right:0;overflow:hidden}
+.view{position:absolute;inset:0;display:none;overflow:auto;-webkit-overflow-scrolling:touch}
+.view.on{display:block}
+.view.flex{display:none;flex-direction:column}
+.view.flex.on{display:flex}
+
+#tabs{
+  position:fixed;bottom:0;left:0;right:0;height:calc(var(--tab) + var(--sab));
+  padding-bottom:var(--sab);display:flex;background:#141821;border-top:1px solid var(--line);z-index:40
+}
+#tabs button{
+  flex:1;border:0;border-radius:0;background:transparent;color:var(--fg2);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10.5px;padding:4px 0
+}
+#tabs button svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.7}
+#tabs button.on{color:var(--acc)}
+
+/* ---------- generic blocks ---------- */
+.pad{padding:12px}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:12px;margin:0 0 10px}
+.card h3{margin:0 0 8px;font-size:14px;letter-spacing:.02em}
+.card h3 .n{color:var(--acc);font-variant-numeric:tabular-nums}
+.hint{color:var(--fg2);font-size:12.5px;margin:6px 0 0}
+.row{display:flex;gap:8px;align-items:center}
+.row.wrap{flex-wrap:wrap}
+.row>*{min-width:0}
+.grow{flex:1}
+.field{margin:0 0 8px}
+.field label{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.stat{background:var(--bg3);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.stat .k{font-size:11px;color:var(--fg2);text-transform:uppercase;letter-spacing:.06em}
+.stat .v{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:11px;color:var(--fg2);font-weight:400}
+.badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:99px;background:var(--bg3);border:1px solid var(--line);color:var(--fg2)}
+.badge.ok{color:#062;background:var(--ok);border-color:transparent}
+.badge.warn{color:#3a2500;background:var(--warn);border-color:transparent}
+.badge.bad{color:#fff;background:var(--bad);border-color:transparent}
+ol.steps{margin:6px 0 0;padding-left:20px;color:var(--fg2);font-size:13px}
+ol.steps li{margin:4px 0}
+ol.steps b{color:var(--fg)}
+table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+table.tbl th,table.tbl td{text-align:left;padding:6px 6px;border-bottom:1px solid var(--line)}
+table.tbl th{color:var(--fg2);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* ---------- camera / photo stage ---------- */
+.stage{position:relative;flex:1;min-height:0;background:#000;overflow:hidden}
+.stage video,.stage canvas.img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
+.stage canvas.ov{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.stage .msg{
+  position:absolute;left:10px;right:10px;top:10px;background:rgba(15,17,21,.86);
+  border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12.5px;color:var(--fg)
+}
+.stage .hud{
+  position:absolute;left:10px;bottom:10px;background:rgba(15,17,21,.8);border:1px solid var(--line);
+  border-radius:10px;padding:6px 9px;font-size:11.5px;color:var(--fg2);font-variant-numeric:tabular-nums
+}
+.stage .hud b{color:var(--fg)}
+.bar{display:flex;gap:8px;padding:8px 10px;background:var(--bg2);border-top:1px solid var(--line);flex-wrap:wrap}
+.bar button{flex:1;min-width:84px}
+.crosshair{position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;pointer-events:none}
+.crosshair:before,.crosshair:after{content:'';position:absolute;background:rgba(57,208,168,.9)}
+.crosshair:before{left:50%;top:0;bottom:0;width:1px;margin-left:-.5px}
+.crosshair:after{top:50%;left:0;right:0;height:1px;margin-top:-.5px}
+
+/* ---------- plan ---------- */
+#planWrap{position:relative;flex:1;min-height:0;background:#0b0d11}
+#planWrap canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.planTools{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px}
+.planTools button{width:40px;height:36px;padding:0;font-size:15px;background:rgba(31,36,46,.92)}
+.selInfo{
+  position:absolute;left:8px;top:8px;background:rgba(15,17,21,.9);border:1px solid var(--line);
+  border-radius:10px;padding:8px 10px;font-size:12.5px;max-width:70%
+}
+.selInfo .row{margin-top:6px}
+.selInfo input{width:88px;padding:5px 7px}
+
+/* ---------- 3d ---------- */
+#glWrap{position:relative;flex:1;min-height:0;background:#0a0c10}
+#glWrap canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.glHud{position:absolute;left:8px;top:8px;font-size:11.5px;color:var(--fg2);background:rgba(15,17,21,.75);
+  border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+.toggles{display:flex;gap:6px;flex-wrap:wrap;padding:8px 10px;background:var(--bg2);border-top:1px solid var(--line)}
+.toggles label{display:flex;align-items:center;gap:5px;font-size:12px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:99px;padding:5px 10px}
+.toggles input{width:auto}
+
+/* ---------- misc ---------- */
+.sheet{position:fixed;inset:0;background:rgba(4,6,10,.62);z-index:60;display:none;align-items:flex-end}
+.sheet.on{display:flex}
+.sheet .inner{width:100%;max-height:88%;overflow:auto;background:var(--bg2);border-top:1px solid var(--line);
+  border-radius:16px 16px 0 0;padding:14px 12px calc(14px + var(--sab))}
+.sheet h2{margin:0 0 10px;font-size:16px}
+#toast{position:fixed;left:50%;bottom:calc(var(--tab) + var(--sab) + 14px);transform:translateX(-50%);
+  background:#2b3240;border:1px solid #3c4658;color:var(--fg);padding:9px 14px;border-radius:99px;font-size:13px;
+  z-index:80;opacity:0;transition:opacity .18s;pointer-events:none;max-width:88vw;text-align:center}
+#toast.on{opacity:1}
+.kbd{font:12px ui-monospace,monospace;background:var(--bg3);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.sep{height:1px;background:var(--line);margin:10px 0}
+.warnbox{background:#2a2210;border:1px solid #5c4a1a;color:#ffdc9a;border-radius:10px;padding:9px 11px;font-size:12.5px}
+.okbox{background:#10281f;border:1px solid #1d5a45;color:#a8f0d8;border-radius:10px;padding:9px 11px;font-size:12.5px}
+@media(min-width:760px){
+  .stats{grid-template-columns:repeat(4,1fr)}
+  .pad{max-width:820px;margin:0 auto}
+}
+</style>
+</head>
+<body>
+
+<div id="top">
+  <div class="title" id="roomName">Room 1</div>
+  <div class="chip" id="areaChip">— m²</div>
+  <button id="btnUndo" class="ghost" title="Undo">↶</button>
+</div>
+
+<div id="main">
+
+  <!-- ============ SCAN ============ -->
+  <section class="view flex" id="v-scan">
+    <div class="stage">
+      <video id="vid" playsinline muted></video>
+      <canvas class="ov" id="scanOv"></canvas>
+      <div class="msg" id="scanMsg">Tap <b>Start camera</b>. Needs an <b>https://</b> page and motion-sensor permission — if that is not available, use the <b>Photo</b> tab instead.</div>
+      <div class="hud" id="scanHud"></div>
+    </div>
+    <div class="bar">
+      <button id="btnCam" class="primary">Start camera</button>
+      <button id="btnMark">Mark corner</button>
+      <button id="btnCeil">Ceiling ht</button>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0">
+      <button id="btnCalib">Calibrate…</button>
+      <button id="btnStation">New spot…</button>
+      <button id="btnGrab">Grab photo</button>
+      <button id="btnUndoPt">Undo pt</button>
+    </div>
+  </section>
+
+  <!-- ============ PHOTO ============ -->
+  <section class="view flex" id="v-photo">
+    <div class="stage">
+      <canvas class="ov" id="photoCv"></canvas>
+      <div class="msg" id="photoMsg">Step 1 — put a known object flat on the floor (A4 sheet, floor tile, tape square). Photograph the room corner so both the object and the floor corners are visible.</div>
+    </div>
+    <div class="bar">
+      <button id="btnPhotoTake" class="primary">Photo</button>
+      <select id="refPreset" style="flex:2">
+        <option value="0.297,0.210">A4 sheet — 297 × 210 mm</option>
+        <option value="0.420,0.297">A3 sheet — 420 × 297 mm</option>
+        <option value="0.600,0.600">Tile 600 × 600 mm</option>
+        <option value="0.400,0.400">Tile 400 × 400 mm</option>
+        <option value="0.300,0.300">Tile 300 × 300 mm</option>
+        <option value="1.000,1.000">Tape square 1 × 1 m</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0">
+      <button id="mRef" class="blue">1 · Reference</button>
+      <button id="mCorners">2 · Corners</button>
+      <button id="mWall">3 · Wall photo</button>
+      <button id="btnPhotoUndo">Undo pt</button>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0">
+      <button id="btnUseRoom" class="primary">Use corners as room</button>
+      <button id="btnAppendRoom">Append</button>
+    </div>
+  </section>
+
+  <!-- ============ PLAN ============ -->
+  <section class="view flex" id="v-plan">
+    <div id="planWrap">
+      <canvas id="planCv"></canvas>
+      <div class="planTools">
+        <button id="pFit" title="Fit">⤢</button>
+        <button id="pOrtho" title="Ortho snap">⌐</button>
+        <button id="pDel" title="Delete selected">🗑</button>
+      </div>
+      <div class="selInfo" id="selInfo" style="display:none"></div>
+    </div>
+    <div class="bar">
+      <button id="btnRect">Rectangle…</button>
+      <button id="btnReg">Square up</button>
+      <button id="btnOpening">Opening…</button>
+      <button id="btnClearPts" class="danger">Clear</button>
+    </div>
+  </section>
+
+  <!-- ============ 3D ============ -->
+  <section class="view flex" id="v-3d">
+    <div id="glWrap">
+      <canvas id="gl"></canvas>
+      <div class="glHud" id="glHud"></div>
+    </div>
+    <div class="toggles">
+      <label><input type="checkbox" id="tCeil"> Ceiling</label>
+      <label><input type="checkbox" id="tTex" checked> Photos</label>
+      <label><input type="checkbox" id="tEdge" checked> Edges</label>
+      <label><input type="checkbox" id="tGrid" checked> Grid</label>
+    </div>
+    <div class="bar">
+      <button id="g3Fit">Fit</button>
+      <button id="g3Top">Top</button>
+      <button id="g3In">Inside</button>
+      <button id="g3Shot">PNG</button>
+    </div>
+  </section>
+
+  <!-- ============ EXPORT / SETUP ============ -->
+  <section class="view" id="v-out">
+    <div class="pad">
+      <div class="card">
+        <h3>Room</h3>
+        <div class="grid2">
+          <div class="field"><label>Name</label><input id="fName" type="text"></div>
+          <div class="field"><label>Ceiling height (m)</label><input id="fHeight" type="number" step="0.005" min="1" max="12"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Display units</label>
+            <select id="fUnits"><option value="m">metres</option><option value="mm">millimetres</option><option value="ft">feet / inches</option></select>
+          </div>
+          <div class="field"><label>Phone height when scanning (m)</label><input id="fCamH" type="number" step="0.005" min="0.3" max="2.5"></div>
+        </div>
+        <div class="field"><label>Notes</label><textarea id="fNotes" rows="2"></textarea></div>
+      </div>
+
+      <div class="card">
+        <h3>Measured</h3>
+        <div class="stats" id="statBox"></div>
+        <div class="sep"></div>
+        <div style="overflow:auto"><table class="tbl" id="wallTbl"></table></div>
+      </div>
+
+      <div class="card">
+        <h3>Export</h3>
+        <div class="grid2">
+          <button id="xGLB" class="primary">3D model · GLB</button>
+          <button id="xOBJ">3D model · OBJ zip</button>
+          <button id="xSVG">Floor plan · SVG</button>
+          <button id="xCSV">Schedule · CSV</button>
+          <button id="xJSON">Project · JSON</button>
+          <button id="xLoad">Open project…</button>
+        </div>
+        <p class="hint">GLB opens in Windows 3D Viewer, Blender, SketchUp, Revit (via import), and phone AR viewers. OBJ zip carries the wall photos as textures.</p>
+      </div>
+
+      <div class="card">
+        <h3>Saved rooms</h3>
+        <div class="row"><input id="slotName" type="text" placeholder="Save as…"><button id="slotSave" class="blue">Save</button></div>
+        <div id="slotList" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <h3>How accurate is this?</h3>
+        <p class="hint" style="margin-top:0">This is single-view metrology, not lidar. Accuracy depends entirely on calibration and on how precisely you tap the corners.</p>
+        <ol class="steps">
+          <li><b>Photo mode</b> — typically ±1–3% within about 3 m of the reference object. Use the biggest reference you can and keep the room corners near it.</li>
+          <li><b>Scan mode</b> — typically ±2–5%, dominated by the phone-height and focal-length calibration and by compass drift.</li>
+          <li><b>Best practice</b> — tape-measure one or two walls, type those lengths into the plan and lock them, then hit <b>Square up</b>. The rest of the room is scaled and squared to the measurements you trust.</li>
+        </ol>
+      </div>
+
+      <div style="height:20px"></div>
+    </div>
+  </section>
+</div>
+
+<nav id="tabs">
+  <button data-v="scan"><svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/><circle cx="12" cy="12" r="3.2"/></svg>Scan</button>
+  <button data-v="photo"><svg viewBox="0 0 24 24"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>Photo</button>
+  <button data-v="plan"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3z"/><path d="M3 10h7V3M14 21v-7h7"/></svg>Plan</button>
+  <button data-v="3d"><svg viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></svg>3D</button>
+  <button data-v="out"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v3h16v-3"/></svg>Export</button>
+</nav>
+
+<!-- ============ sheets ============ -->
+<div class="sheet" id="sheet">
+  <div class="inner" id="sheetInner"></div>
+</div>
+
+<div id="toast"></div>
+
+<input type="file" id="photoFile" accept="image/*" capture="environment" hidden>
+<input type="file" id="jsonFile" accept="application/json,.json" hidden>
+
+<script>
+/* js/mathx.js */
+/* mathx.js — geometry, linear algebra, single-view metrology
+   Namespace: RM.M   (no dependencies) */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = {};
+
+  M.DEG = Math.PI / 180;
+  M.RAD = 180 / Math.PI;
+  M.clamp = function (v, a, b) { return Math.min(b, Math.max(a, v)); };
+  M.dist = function (a, b) { return Math.hypot(b.x - a.x, b.y - a.y); };
+  M.round = function (v, n) { var p = Math.pow(10, n == null ? 3 : n); return Math.round(v * p) / p; };
+
+  /* ---------------- dense linear solve (Gauss, partial pivot) ---------------- */
+  M.solve = function (A, b) {
+    var n = b.length, i, j, k, m = [];
+    for (i = 0; i < n; i++) m.push(A[i].slice().concat([b[i]]));
+    for (i = 0; i < n; i++) {
+      var p = i;
+      for (j = i + 1; j < n; j++) if (Math.abs(m[j][i]) > Math.abs(m[p][i])) p = j;
+      if (Math.abs(m[p][i]) < 1e-12) return null;
+      var t = m[i]; m[i] = m[p]; m[p] = t;
+      for (j = i + 1; j < n; j++) {
+        var f = m[j][i] / m[i][i];
+        if (f === 0) continue;
+        for (k = i; k <= n; k++) m[j][k] -= f * m[i][k];
+      }
+    }
+    var x = new Array(n);
+    for (i = n - 1; i >= 0; i--) {
+      var s = m[i][n];
+      for (j = i + 1; j < n; j++) s -= m[i][j] * x[j];
+      x[i] = s / m[i][i];
+    }
+    return x;
+  };
+
+  /* ---------------- 3x3 homography ---------------- */
+  /* src: 4 image points {x,y}; dst: 4 world points {x,y}. Returns row-major 9-array. */
+  M.homography = function (src, dst) {
+    if (src.length < 4 || dst.length < 4) return null;
+    var A = [], b = [];
+    for (var i = 0; i < 4; i++) {
+      var x = src[i].x, y = src[i].y, X = dst[i].x, Y = dst[i].y;
+      A.push([x, y, 1, 0, 0, 0, -x * X, -y * X]); b.push(X);
+      A.push([0, 0, 0, x, y, 1, -x * Y, -y * Y]); b.push(Y);
+    }
+    var h = M.solve(A, b);
+    if (!h) return null;
+    for (var k = 0; k < 8; k++) if (!isFinite(h[k])) return null;
+    return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+  };
+
+  M.applyH = function (H, p) {
+    var w = H[6] * p.x + H[7] * p.y + H[8];
+    if (Math.abs(w) < 1e-12) return null;
+    return { x: (H[0] * p.x + H[1] * p.y + H[2]) / w, y: (H[3] * p.x + H[4] * p.y + H[5]) / w };
+  };
+
+  M.invert3 = function (m) {
+    var a = m[0], b = m[1], c = m[2], d = m[3], e = m[4], f = m[5], g = m[6], h = m[7], i = m[8];
+    var A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+    var det = a * A + b * B + c * C;
+    if (Math.abs(det) < 1e-14) return null;
+    var id = 1 / det;
+    return [A * id, (c * h - b * i) * id, (b * f - c * e) * id,
+            B * id, (a * i - c * g) * id, (c * d - a * f) * id,
+            C * id, (b * g - a * h) * id, (a * e - b * d) * id];
+  };
+
+  /* ---------------- quaternions (three.js compatible conventions) ---------------- */
+  M.qIdentity = function () { return [0, 0, 0, 1]; };
+
+  /* Euler order YXZ, as used for DeviceOrientationEvent (beta=X, alpha=Y, -gamma=Z) */
+  M.qFromEulerYXZ = function (x, y, z) {
+    var c1 = Math.cos(x / 2), c2 = Math.cos(y / 2), c3 = Math.cos(z / 2);
+    var s1 = Math.sin(x / 2), s2 = Math.sin(y / 2), s3 = Math.sin(z / 2);
+    return [
+      s1 * c2 * c3 + c1 * s2 * s3,
+      c1 * s2 * c3 - s1 * c2 * s3,
+      c1 * c2 * s3 - s1 * s2 * c3,
+      c1 * c2 * c3 + s1 * s2 * s3
+    ];
+  };
+
+  M.qFromAxisAngle = function (ax, ay, az, ang) {
+    var h = ang / 2, s = Math.sin(h);
+    return [ax * s, ay * s, az * s, Math.cos(h)];
+  };
+
+  M.qMul = function (a, b) {
+    return [
+      a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+      a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+      a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+      a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]
+    ];
+  };
+
+  M.qRotate = function (q, v) {
+    var x = v[0], y = v[1], z = v[2], qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+    var ix = qw * x + qy * z - qz * y;
+    var iy = qw * y + qz * x - qx * z;
+    var iz = qw * z + qx * y - qy * x;
+    var iw = -qx * x - qy * y - qz * z;
+    return [
+      ix * qw + iw * -qx + iy * -qz - iz * -qy,
+      iy * qw + iw * -qy + iz * -qx - ix * -qz,
+      iz * qw + iw * -qz + ix * -qy - iy * -qx
+    ];
+  };
+
+  /* World frame: Y up, -Z is device "north"/forward at alpha=0.
+     Plan frame:  x = worldX (east),  y = -worldZ (north) — so forward is +y (screen up). */
+  /* q1 = -90° about X: the camera looks out of the BACK of the device, so an upright
+     phone (beta = 90°) sights the horizon and a flat one (beta = 0) sights the floor. */
+  M.Q1 = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
+
+  M.orientationToQuat = function (alpha, beta, gamma, screenAngle) {
+    var q = M.qFromEulerYXZ(beta * M.DEG, alpha * M.DEG, -gamma * M.DEG);
+    q = M.qMul(q, M.Q1);
+    var q0 = M.qFromAxisAngle(0, 0, 1, -(screenAngle || 0) * M.DEG);
+    return M.qMul(q, q0);
+  };
+
+  /* Ray direction in world coords for an image pixel.
+     cam = {W,H,f} in pixels of the tapped image; f = focal length in px. */
+  M.rayWorld = function (u, v, cam, quat) {
+    var dx = (u - cam.W / 2) / cam.f;
+    var dy = -(v - cam.H / 2) / cam.f;
+    var d = [dx, dy, -1];
+    var n = Math.hypot(d[0], d[1], d[2]);
+    d = [d[0] / n, d[1] / n, d[2] / n];
+    return M.qRotate(quat, d);
+  };
+
+  /* Intersect ray with floor plane y = 0, camera at height camH. Returns plan point + slant range. */
+  M.rayToFloor = function (u, v, cam, quat, camH) {
+    var d = M.rayWorld(u, v, cam, quat);
+    if (d[1] > -1e-4) return null;                // pointing at or above horizon
+    var t = camH / -d[1];
+    if (!isFinite(t) || t <= 0 || t > 200) return null;
+    return { x: d[0] * t, y: -d[2] * t, range: t, dir: d };
+  };
+
+  /* Height of a point known to lie on the vertical line through plan point P. */
+  M.rayToHeightAt = function (u, v, cam, quat, camH, P) {
+    var d = M.rayWorld(u, v, cam, quat);
+    var hx = d[0], hy = -d[2];                    // horizontal part in plan frame
+    var den = hx * hx + hy * hy;
+    if (den < 1e-9) return null;
+    var t = (P.x * hx + P.y * hy) / den;
+    if (t <= 0) return null;
+    return camH + d[1] * t;
+  };
+
+  /* Horizontal ground distance from camera nadir for a given focal length (calibration helper). */
+  M.groundDistance = function (u, v, cam, quat, camH, f) {
+    var c = { W: cam.W, H: cam.H, f: f };
+    var p = M.rayToFloor(u, v, c, quat, camH);
+    return p ? Math.hypot(p.x, p.y) : null;
+  };
+
+  /* ---------------- polygons ---------------- */
+  M.signedArea = function (p) {
+    var a = 0;
+    for (var i = 0, n = p.length; i < n; i++) {
+      var q = p[(i + 1) % n];
+      a += p[i].x * q.y - q.x * p[i].y;
+    }
+    return a / 2;
+  };
+  M.area = function (p) { return Math.abs(M.signedArea(p)); };
+
+  M.perimeter = function (p) {
+    var s = 0;
+    for (var i = 0, n = p.length; i < n; i++) s += M.dist(p[i], p[(i + 1) % n]);
+    return s;
+  };
+
+  M.centroid = function (p) {
+    var x = 0, y = 0;
+    for (var i = 0; i < p.length; i++) { x += p[i].x; y += p[i].y; }
+    return { x: x / (p.length || 1), y: y / (p.length || 1) };
+  };
+
+  M.ensureCCW = function (p) { return M.signedArea(p) < 0 ? p.slice().reverse() : p; };
+
+  M.pointInPoly = function (pt, p) {
+    var inside = false;
+    for (var i = 0, j = p.length - 1; i < p.length; j = i++) {
+      if (((p[i].y > pt.y) !== (p[j].y > pt.y)) &&
+          (pt.x < (p[j].x - p[i].x) * (pt.y - p[i].y) / (p[j].y - p[i].y) + p[i].x)) inside = !inside;
+    }
+    return inside;
+  };
+
+  /* interior angle at vertex i, degrees */
+  M.vertexAngle = function (p, i) {
+    var n = p.length;
+    var a = p[(i - 1 + n) % n], b = p[i], c = p[(i + 1) % n];
+    var v1 = { x: a.x - b.x, y: a.y - b.y }, v2 = { x: c.x - b.x, y: c.y - b.y };
+    var d = Math.atan2(v1.y, v1.x) - Math.atan2(v2.y, v2.x);
+    var deg = d * M.RAD;
+    while (deg < 0) deg += 360;
+    while (deg > 360) deg -= 360;
+    if (M.signedArea(p) < 0) deg = 360 - deg;
+    return deg;
+  };
+
+  /* ear clipping triangulation of a simple polygon (CCW). returns flat index triples */
+  M.triangulate = function (pts) {
+    var p = pts.slice(), idx = [], out = [];
+    if (M.signedArea(p) < 0) { p.reverse(); }
+    var map = [];
+    for (var i = 0; i < p.length; i++) map.push(M.signedArea(pts) < 0 ? pts.length - 1 - i : i);
+    for (i = 0; i < p.length; i++) idx.push(i);
+    var guard = 0;
+    function cross(o, a, b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); }
+    function inTri(a, b, c, q) {
+      var d1 = cross(a, b, q), d2 = cross(b, c, q), d3 = cross(c, a, q);
+      var neg = (d1 < 0) || (d2 < 0) || (d3 < 0), pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+      return !(neg && pos);
+    }
+    while (idx.length > 3 && guard++ < 5000) {
+      var done = false;
+      for (var k = 0; k < idx.length; k++) {
+        var i0 = idx[(k - 1 + idx.length) % idx.length], i1 = idx[k], i2 = idx[(k + 1) % idx.length];
+        var a = p[i0], b = p[i1], c = p[i2];
+        if (cross(a, b, c) <= 1e-12) continue;          // reflex or degenerate
+        var ok = true;
+        for (var m2 = 0; m2 < idx.length; m2++) {
+          var j = idx[m2];
+          if (j === i0 || j === i1 || j === i2) continue;
+          if (inTri(a, b, c, p[j])) { ok = false; break; }
+        }
+        if (!ok) continue;
+        out.push(map[i0], map[i1], map[i2]);
+        idx.splice(k, 1);
+        done = true;
+        break;
+      }
+      if (!done) break;
+    }
+    if (idx.length === 3) out.push(map[idx[0]], map[idx[1]], map[idx[2]]);
+    return out;
+  };
+
+  /* ---------------- Manhattan-world regularization ----------------
+     Snaps wall directions to a dominant axis grid and enforces locked edge lengths
+     by constraint relaxation. locks: {edgeIndex: lengthMeters}. */
+  M.regularize = function (pts, opts) {
+    opts = opts || {};
+    var snap = opts.snapDeg || 90;
+    var tol = (opts.tolDeg == null ? 12 : opts.tolDeg) * M.DEG;
+    var iters = opts.iters || 600;
+    var locks = opts.locks || {};
+    var n = pts.length;
+    if (n < 3) return pts.slice();
+
+    var p = pts.map(function (q) { return { x: q.x, y: q.y }; });
+    var period = snap * M.DEG;
+    var k = 2 * Math.PI / period;               // map angle period -> full circle
+
+    // dominant axis by length-weighted circular mean
+    var sx = 0, sy = 0;
+    for (var i = 0; i < n; i++) {
+      var a = p[i], b = p[(i + 1) % n];
+      var L = M.dist(a, b);
+      if (L < 1e-6) continue;
+      var th = Math.atan2(b.y - a.y, b.x - a.x);
+      sx += L * Math.cos(th * k); sy += L * Math.sin(th * k);
+    }
+    var base = (Math.hypot(sx, sy) < 1e-9) ? 0 : Math.atan2(sy, sx) / k;
+
+    // per-edge target unit vectors
+    var target = new Array(n);
+    for (i = 0; i < n; i++) {
+      var A = p[i], B = p[(i + 1) % n];
+      var len = M.dist(A, B);
+      if (len < 1e-6) { target[i] = null; continue; }
+      var ang = Math.atan2(B.y - A.y, B.x - A.x);
+      var kk = Math.round((ang - base) / period);
+      var snapped = base + kk * period;
+      var diff = Math.atan2(Math.sin(ang - snapped), Math.cos(ang - snapped));
+      target[i] = (Math.abs(diff) <= tol) ? { x: Math.cos(snapped), y: Math.sin(snapped) } : null;
+    }
+
+    var acc = [], cnt = [];
+    for (var it = 0; it < iters; it++) {
+      for (i = 0; i < n; i++) { acc[i] = { x: 0, y: 0 }; cnt[i] = 0; }
+      for (i = 0; i < n; i++) {
+        var i2 = (i + 1) % n, P = p[i], Q = p[i2];
+        var vx = Q.x - P.x, vy = Q.y - P.y;
+        var cur = Math.hypot(vx, vy);
+        if (cur < 1e-9) continue;
+        var ux, uy, L2;
+        if (target[i]) { ux = target[i].x; uy = target[i].y; }
+        else { ux = vx / cur; uy = vy / cur; }
+        L2 = (locks[i] != null) ? locks[i] : Math.abs(vx * ux + vy * uy);
+        var mx = (P.x + Q.x) / 2, my = (P.y + Q.y) / 2;
+        var nPx = mx - ux * L2 / 2, nPy = my - uy * L2 / 2;
+        var nQx = mx + ux * L2 / 2, nQy = my + uy * L2 / 2;
+        acc[i].x += nPx; acc[i].y += nPy; cnt[i]++;
+        acc[i2].x += nQx; acc[i2].y += nQy; cnt[i2]++;
+      }
+      var w = 0.7;
+      for (i = 0; i < n; i++) {
+        if (!cnt[i]) continue;
+        var tx = acc[i].x / cnt[i], ty = acc[i].y / cnt[i];
+        p[i].x += (tx - p[i].x) * w;
+        p[i].y += (ty - p[i].y) * w;
+      }
+    }
+    // keep it in place
+    var c0 = M.centroid(pts), c1 = M.centroid(p);
+    for (i = 0; i < n; i++) { p[i].x += c0.x - c1.x; p[i].y += c0.y - c1.y; }
+    return p;
+  };
+
+  /* build polygon from a chain of lengths + turn angles (manual entry) */
+  M.fromLengthsAngles = function (segs, startAngleDeg) {
+    var ang = (startAngleDeg || 0) * M.DEG, x = 0, y = 0, out = [{ x: 0, y: 0 }];
+    for (var i = 0; i < segs.length; i++) {
+      x += Math.cos(ang) * segs[i].len;
+      y += Math.sin(ang) * segs[i].len;
+      if (i < segs.length - 1) out.push({ x: x, y: y });
+      ang += (180 - (segs[i].turn == null ? 90 : segs[i].turn)) * M.DEG;
+    }
+    return out;
+  };
+
+  M.rect = function (w, d) {
+    return [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: d }, { x: 0, y: d }];
+  };
+
+  RM.M = M;
+})();
+</script>
+<script>
+/* js/sensors.js */
+/* sensors.js — device orientation (tilt/heading) + camera stream helpers
+   Namespace: RM.S */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M;
+  var S = {
+    supported: ('DeviceOrientationEvent' in window),
+    active: false,
+    absolute: false,
+    alpha: 0, beta: 0, gamma: 0,
+    heading: null,
+    yawOffset: 0,          // user-applied zero for relative heading
+    lastEventAt: 0,
+    listeners: []
+  };
+
+  function screenAngle() {
+    if (screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
+    return window.orientation || 0;
+  }
+  S.screenAngle = screenAngle;
+
+  function onOrient(e) {
+    if (e.alpha == null && e.beta == null && e.gamma == null) return;
+    S.alpha = e.alpha || 0;
+    S.beta = e.beta || 0;
+    S.gamma = e.gamma || 0;
+    if (e.absolute) S.absolute = true;
+    if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+      S.heading = e.webkitCompassHeading;
+      S.absolute = true;
+    }
+    S.lastEventAt = Date.now();
+    S.active = true;
+    for (var i = 0; i < S.listeners.length; i++) { try { S.listeners[i](S); } catch (err) {} }
+  }
+
+  S.onUpdate = function (fn) { S.listeners.push(fn); };
+
+  /* Must be called from a user gesture on iOS 13+ */
+  S.request = function () {
+    return new Promise(function (resolve) {
+      if (!S.supported) { resolve({ ok: false, reason: 'DeviceOrientationEvent not supported' }); return; }
+      var attach = function () {
+        window.addEventListener('deviceorientationabsolute', onOrient, true);
+        window.addEventListener('deviceorientation', onOrient, true);
+        setTimeout(function () {
+          resolve({ ok: S.active, reason: S.active ? '' : 'No orientation data received (sensors blocked, desktop, or insecure context)' });
+        }, 700);
+      };
+      var D = window.DeviceOrientationEvent;
+      if (D && typeof D.requestPermission === 'function') {
+        D.requestPermission().then(function (r) {
+          if (r === 'granted') attach();
+          else resolve({ ok: false, reason: 'Motion & orientation permission denied' });
+        }).catch(function (e) { resolve({ ok: false, reason: String(e && e.message || e) }); });
+      } else attach();
+    });
+  };
+
+  /* current camera->world quaternion, with optional yaw zeroing */
+  S.quat = function () {
+    var a = S.alpha - S.yawOffset;
+    return M.orientationToQuat(a, S.beta, S.gamma, screenAngle());
+  };
+
+  S.zeroYaw = function () { S.yawOffset = S.alpha; };
+
+  /* pitch of the optical axis below horizontal, degrees (positive = looking down) */
+  S.pitchDown = function () {
+    var d = M.qRotate(S.quat(), [0, 0, -1]);
+    return Math.asin(M.clamp(-d[1], -1, 1)) * M.RAD;
+  };
+
+  /* roll of the device about the optical axis, degrees */
+  S.roll = function () {
+    var q = S.quat();
+    var right = M.qRotate(q, [1, 0, 0]);
+    return Math.asin(M.clamp(right[1], -1, 1)) * M.RAD;
+  };
+
+  /* ---------------- camera ---------------- */
+  S.secure = (window.isSecureContext === true) ||
+             location.protocol === 'https:' ||
+             /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+
+  S.openCamera = function (video) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return Promise.reject(new Error(S.secure
+        ? 'getUserMedia unavailable in this browser'
+        : 'Camera needs a secure page (https:// or localhost). Use Photo mode instead.'));
+    }
+    var tries = [
+      { video: { facingMode: { exact: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+      { video: { facingMode: 'environment' }, audio: false },
+      { video: true, audio: false }
+    ];
+    var i = 0;
+    function next() {
+      return navigator.mediaDevices.getUserMedia(tries[i]).catch(function (e) {
+        i++;
+        if (i < tries.length) return next();
+        throw e;
+      });
+    }
+    return next().then(function (stream) {
+      video.srcObject = stream;
+      video.setAttribute('playsinline', '');
+      video.muted = true;
+      return video.play().catch(function () {}).then(function () { return stream; });
+    });
+  };
+
+  S.closeCamera = function (video) {
+    var s = video && video.srcObject;
+    if (s) { s.getTracks().forEach(function (t) { t.stop(); }); video.srcObject = null; }
+  };
+
+  S.grabFrame = function (video, maxW) {
+    var w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) return null;
+    var sc = Math.min(1, (maxW || 1280) / Math.max(w, h));
+    var c = document.createElement('canvas');
+    c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+    c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+    return c;
+  };
+
+  RM.S = S;
+})();
+</script>
+<script>
+/* js/store.js */
+/* store.js — room model, persistence, undo
+   Namespace: RM.store */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M;
+  var KEY = 'roomscan.project.v1';
+  var SLOTS = 'roomscan.slots.v1';
+
+  function blank() {
+    return {
+      v: 1,
+      name: 'Room 1',
+      height: 2.7,
+      points: [],
+      walls: [],
+      locks: {},
+      calib: { fRel: 0.75, camH: 1.50, fovDeg: null, verified: false },
+      units: 'm',
+      notes: '',
+      updated: Date.now()
+    };
+  }
+
+  var store = {
+    p: blank(),
+    _undo: [],
+    _redo: [],
+    _subs: []
+  };
+
+  store.on = function (fn) { store._subs.push(fn); return fn; };
+  store.emit = function (what) {
+    store.p.updated = Date.now();
+    for (var i = 0; i < store._subs.length; i++) { try { store._subs[i](store.p, what); } catch (e) { console.error(e); } }
+    store.saveLocal();
+  };
+
+  store.snapshot = function () {
+    store._undo.push(JSON.stringify(store.p));
+    if (store._undo.length > 50) store._undo.shift();
+    store._redo.length = 0;
+  };
+
+  store.undo = function () {
+    if (!store._undo.length) return false;
+    store._redo.push(JSON.stringify(store.p));
+    store.p = JSON.parse(store._undo.pop());
+    store.emit('undo');
+    return true;
+  };
+
+  store.redo = function () {
+    if (!store._redo.length) return false;
+    store._undo.push(JSON.stringify(store.p));
+    store.p = JSON.parse(store._redo.pop());
+    store.emit('redo');
+    return true;
+  };
+
+  store.canUndo = function () { return store._undo.length > 0; };
+
+  /* --- wall bookkeeping: wall i spans points[i] -> points[i+1] --- */
+  store.syncWalls = function () {
+    var p = store.p;
+    p.walls = p.walls || [];
+    while (p.walls.length < p.points.length) p.walls.push({ tex: null, openings: [] });
+    while (p.walls.length > p.points.length) p.walls.pop();
+    for (var i = 0; i < p.walls.length; i++) {
+      p.walls[i].openings = p.walls[i].openings || [];
+      if (!('tex' in p.walls[i])) p.walls[i].tex = null;
+    }
+  };
+
+  store.setPoints = function (pts, what) {
+    store.snapshot();
+    store.p.points = pts.map(function (q) { return { x: M.round(q.x, 4), y: M.round(q.y, 4) }; });
+    store.syncWalls();
+    store.emit(what || 'points');
+  };
+
+  store.addPoint = function (pt) {
+    store.snapshot();
+    store.p.points.push({ x: M.round(pt.x, 4), y: M.round(pt.y, 4) });
+    store.syncWalls();
+    store.emit('points');
+  };
+
+  store.movePoint = function (i, pt, silent) {
+    if (!store.p.points[i]) return;
+    store.p.points[i].x = M.round(pt.x, 4);
+    store.p.points[i].y = M.round(pt.y, 4);
+    if (!silent) store.emit('points');
+  };
+
+  store.removePoint = function (i) {
+    store.snapshot();
+    store.p.points.splice(i, 1);
+    var nl = {};
+    Object.keys(store.p.locks).forEach(function (k) {
+      var e = +k;
+      if (e === i) return;
+      nl[e > i ? e - 1 : e] = store.p.locks[k];
+    });
+    store.p.locks = nl;
+    store.syncWalls();
+    store.emit('points');
+  };
+
+  store.insertPointAfter = function (i, pt) {
+    store.snapshot();
+    store.p.points.splice(i + 1, 0, { x: M.round(pt.x, 4), y: M.round(pt.y, 4) });
+    store.p.locks = {};
+    store.syncWalls();
+    store.emit('points');
+  };
+
+  /* set an edge length by moving the far end (and everything is re-derived after) */
+  store.setEdgeLength = function (i, len) {
+    var p = store.p, n = p.points.length;
+    if (n < 2) return;
+    var a = p.points[i], b = p.points[(i + 1) % n];
+    var d = M.dist(a, b);
+    if (d < 1e-6 || !isFinite(len) || len <= 0) return;
+    store.snapshot();
+    var ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
+    b.x = M.round(a.x + ux * len, 4);
+    b.y = M.round(a.y + uy * len, 4);
+    p.locks[i] = len;
+    store.emit('points');
+  };
+
+  store.toggleLock = function (i) {
+    var p = store.p, n = p.points.length;
+    if (p.locks[i] != null) delete p.locks[i];
+    else p.locks[i] = M.dist(p.points[i], p.points[(i + 1) % n]);
+    store.emit('locks');
+  };
+
+  store.setHeight = function (h) {
+    if (!isFinite(h) || h <= 0) return;
+    store.snapshot();
+    store.p.height = M.round(h, 3);
+    store.emit('height');
+  };
+
+  store.addOpening = function (wall, o) {
+    store.syncWalls();
+    if (!store.p.walls[wall]) return;
+    store.snapshot();
+    store.p.walls[wall].openings.push(o);
+    store.emit('openings');
+  };
+
+  store.removeOpening = function (wall, i) {
+    if (!store.p.walls[wall]) return;
+    store.snapshot();
+    store.p.walls[wall].openings.splice(i, 1);
+    store.emit('openings');
+  };
+
+  store.setWallTex = function (wall, dataURL) {
+    store.syncWalls();
+    if (!store.p.walls[wall]) return;
+    store.p.walls[wall].tex = dataURL;
+    store.emit('tex');
+  };
+
+  store.reset = function () {
+    store.snapshot();
+    var calib = store.p.calib, name = store.p.name, h = store.p.height;
+    store.p = blank();
+    store.p.calib = calib; store.p.name = name; store.p.height = h;
+    store.emit('reset');
+  };
+
+  store.clearPoints = function () {
+    store.snapshot();
+    store.p.points = [];
+    store.p.walls = [];
+    store.p.locks = {};
+    store.emit('points');
+  };
+
+  /* --- derived --- */
+  store.stats = function () {
+    var p = store.p, n = p.points.length;
+    if (n < 3) return { area: 0, perimeter: 0, wallArea: 0, volume: 0, n: n };
+    var area = M.area(p.points), per = M.perimeter(p.points);
+    var openArea = 0;
+    store.syncWalls();
+    for (var i = 0; i < n; i++) {
+      (p.walls[i].openings || []).forEach(function (o) { openArea += o.w * (o.head - o.sill); });
+    }
+    return {
+      n: n,
+      area: area,
+      perimeter: per,
+      wallArea: Math.max(0, per * p.height - openArea),
+      openingArea: openArea,
+      volume: area * p.height
+    };
+  };
+
+  store.wallList = function () {
+    var p = store.p, n = p.points.length, out = [];
+    store.syncWalls();
+    for (var i = 0; i < n; i++) {
+      var a = p.points[i], b = p.points[(i + 1) % n];
+      var len = M.dist(a, b);
+      var ang = Math.atan2(b.y - a.y, b.x - a.x) * M.RAD;
+      out.push({
+        i: i, a: a, b: b, len: len, angle: ang,
+        locked: p.locks[i] != null,
+        openings: p.walls[i].openings || [],
+        tex: p.walls[i].tex,
+        area: Math.max(0, len * p.height - (p.walls[i].openings || []).reduce(function (s, o) { return s + o.w * (o.head - o.sill); }, 0))
+      });
+    }
+    return out;
+  };
+
+  /* --- persistence --- */
+  store.saveLocal = function () {
+    try { localStorage.setItem(KEY, JSON.stringify(store.p)); } catch (e) {}
+  };
+
+  store.loadLocal = function () {
+    try {
+      var s = localStorage.getItem(KEY);
+      if (!s) return false;
+      var o = JSON.parse(s);
+      if (!o || !o.v) return false;
+      store.p = Object.assign(blank(), o);
+      store.syncWalls();
+      return true;
+    } catch (e) { return false; }
+  };
+
+  store.slots = function () {
+    try { return JSON.parse(localStorage.getItem(SLOTS) || '[]'); } catch (e) { return []; }
+  };
+
+  store.saveSlot = function (name) {
+    var list = store.slots();
+    var copy = JSON.parse(JSON.stringify(store.p));
+    copy.name = name || copy.name;
+    var i = list.findIndex(function (s) { return s.name === copy.name; });
+    if (i >= 0) list[i] = copy; else list.push(copy);
+    try { localStorage.setItem(SLOTS, JSON.stringify(list)); } catch (e) { return false; }
+    return true;
+  };
+
+  store.loadSlot = function (name) {
+    var s = store.slots().find(function (x) { return x.name === name; });
+    if (!s) return false;
+    store.snapshot();
+    store.p = Object.assign(blank(), JSON.parse(JSON.stringify(s)));
+    store.syncWalls();
+    store.emit('load');
+    return true;
+  };
+
+  store.deleteSlot = function (name) {
+    var list = store.slots().filter(function (x) { return x.name !== name; });
+    try { localStorage.setItem(SLOTS, JSON.stringify(list)); } catch (e) {}
+  };
+
+  store.importJSON = function (text) {
+    var o = JSON.parse(text);
+    if (!o || !o.points) throw new Error('Not a room project file');
+    store.snapshot();
+    store.p = Object.assign(blank(), o);
+    store.syncWalls();
+    store.emit('load');
+  };
+
+  RM.store = store;
+})();
+</script>
+<script>
+/* js/plan.js */
+/* plan.js — 2D floor plan editor (pan/zoom, drag vertices, dimensions, openings)
+   Namespace: RM.plan */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M, store = RM.store;
+
+  var plan = {
+    canvas: null, ctx: null,
+    view: { cx: 0, cy: 0, scale: 60 },      // world metres -> px
+    sel: null,                               // {type:'vertex'|'edge', i}
+    snapOrtho: true, snapGrid: 0.05,
+    onselect: null,
+    _dirty: true
+  };
+
+  function W2S(p) {
+    var c = plan.canvas, dpr = plan.dpr;
+    return {
+      x: (p.x - plan.view.cx) * plan.view.scale + c.width / dpr / 2,
+      y: -(p.y - plan.view.cy) * plan.view.scale + c.height / dpr / 2
+    };
+  }
+  function S2W(p) {
+    var c = plan.canvas, dpr = plan.dpr;
+    return {
+      x: (p.x - c.width / dpr / 2) / plan.view.scale + plan.view.cx,
+      y: -(p.y - c.height / dpr / 2) / plan.view.scale + plan.view.cy
+    };
+  }
+  plan.W2S = W2S; plan.S2W = S2W;
+
+  plan.init = function (canvas) {
+    plan.canvas = canvas;
+    plan.ctx = canvas.getContext('2d');
+    plan.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    bindInput(canvas);
+    store.on(function () { plan.draw(); });
+    plan.draw();
+  };
+
+  plan.fit = function () {
+    var p = store.p.points;
+    if (!p.length) { plan.view = { cx: 0, cy: 0, scale: 60 }; plan.draw(); return; }
+    var minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+    p.forEach(function (q) {
+      minx = Math.min(minx, q.x); maxx = Math.max(maxx, q.x);
+      miny = Math.min(miny, q.y); maxy = Math.max(maxy, q.y);
+    });
+    var c = plan.canvas, dpr = plan.dpr;
+    var w = (maxx - minx) || 1, h = (maxy - miny) || 1;
+    var sx = (c.width / dpr - 96) / w, sy = (c.height / dpr - 96) / h;
+    plan.view.scale = M.clamp(Math.min(sx, sy), 4, 400);
+    plan.view.cx = (minx + maxx) / 2; plan.view.cy = (miny + maxy) / 2;
+    plan.draw();
+  };
+
+  /* ---------------- input ---------------- */
+  function bindInput(canvas) {
+    var pts = {}, drag = null, pinch = null, moved = 0, downAt = null;
+
+    function local(e) {
+      var r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    function hitVertex(s) {
+      var best = -1, bd = 26;
+      store.p.points.forEach(function (q, i) {
+        var sp = W2S(q), d = Math.hypot(sp.x - s.x, sp.y - s.y);
+        if (d < bd) { bd = d; best = i; }
+      });
+      return best;
+    }
+    function hitEdge(s) {
+      var p = store.p.points, n = p.length, best = -1, bd = 20;
+      for (var i = 0; i < n; i++) {
+        var a = W2S(p[i]), b = W2S(p[(i + 1) % n]);
+        var vx = b.x - a.x, vy = b.y - a.y, L2 = vx * vx + vy * vy;
+        if (L2 < 1) continue;
+        var t = M.clamp(((s.x - a.x) * vx + (s.y - a.y) * vy) / L2, 0, 1);
+        var d = Math.hypot(a.x + vx * t - s.x, a.y + vy * t - s.y);
+        if (d < bd) { bd = d; best = i; }
+      }
+      return best;
+    }
+
+    canvas.addEventListener('pointerdown', function (e) {
+      canvas.setPointerCapture(e.pointerId);
+      var s = local(e);
+      pts[e.pointerId] = s;
+      var keys = Object.keys(pts);
+      moved = 0; downAt = s;
+      if (keys.length === 1) {
+        var vi = hitVertex(s);
+        if (vi >= 0) drag = { type: 'vertex', i: vi, snapped: false };
+        else drag = { type: 'pan', start: s, cx: plan.view.cx, cy: plan.view.cy };
+      } else if (keys.length === 2) {
+        drag = null;
+        var a = pts[keys[0]], b = pts[keys[1]];
+        pinch = {
+          d: Math.hypot(a.x - b.x, a.y - b.y),
+          c: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+          scale: plan.view.scale, cx: plan.view.cx, cy: plan.view.cy
+        };
+      }
+    });
+
+    canvas.addEventListener('pointermove', function (e) {
+      if (!(e.pointerId in pts)) return;
+      var s = local(e);
+      moved = Math.max(moved, Math.hypot(s.x - downAt.x, s.y - downAt.y));
+      pts[e.pointerId] = s;
+      var keys = Object.keys(pts);
+      if (keys.length >= 2 && pinch) {
+        var a = pts[keys[0]], b = pts[keys[1]];
+        var d = Math.hypot(a.x - b.x, a.y - b.y);
+        var c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        plan.view.scale = M.clamp(pinch.scale * (d / (pinch.d || 1)), 4, 500);
+        plan.view.cx = pinch.cx - (c.x - pinch.c.x) / plan.view.scale;
+        plan.view.cy = pinch.cy + (c.y - pinch.c.y) / plan.view.scale;
+        plan.draw();
+        return;
+      }
+      if (!drag) return;
+      if (drag.type === 'pan') {
+        plan.view.cx = drag.cx - (s.x - drag.start.x) / plan.view.scale;
+        plan.view.cy = drag.cy + (s.y - drag.start.y) / plan.view.scale;
+        plan.draw();
+      } else if (drag.type === 'vertex') {
+        if (!drag.snapped) { store.snapshot(); drag.snapped = true; }   // undo only on real moves
+        var w = S2W(s);
+        w = applySnap(w, drag.i);
+        store.movePoint(drag.i, w, true);
+        plan.sel = { type: 'vertex', i: drag.i };
+        plan.draw();
+        if (plan.onselect) plan.onselect(plan.sel);
+      }
+    });
+
+    function endPointer(e) {
+      delete pts[e.pointerId];
+      if (Object.keys(pts).length < 2) pinch = null;
+      if (drag && drag.type === 'vertex' && drag.snapped) { store.emit('points'); }
+      if (moved < 6 && downAt) {
+        var vi = hitVertex(downAt);
+        if (vi >= 0) plan.sel = { type: 'vertex', i: vi };
+        else {
+          var ei = hitEdge(downAt);
+          plan.sel = ei >= 0 ? { type: 'edge', i: ei } : null;
+        }
+        if (plan.onselect) plan.onselect(plan.sel);
+      }
+      drag = null;
+      plan.draw();
+    }
+    canvas.addEventListener('pointerup', endPointer);
+    canvas.addEventListener('pointercancel', endPointer);
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      var f = Math.exp(-Math.sign(e.deltaY) * 0.14);
+      plan.view.scale = M.clamp(plan.view.scale * f, 4, 500);
+      plan.draw();
+    }, { passive: false });
+  }
+
+  /* snap a dragged vertex: grid + ortho alignment to its two neighbours */
+  function applySnap(w, i) {
+    var g = plan.snapGrid;
+    if (g > 0) { w = { x: Math.round(w.x / g) * g, y: Math.round(w.y / g) * g }; }
+    if (!plan.snapOrtho) return w;
+    var p = store.p.points, n = p.length;
+    if (n < 3) return w;
+    var tol = 0.12;
+    [p[(i - 1 + n) % n], p[(i + 1) % n]].forEach(function (nb) {
+      if (Math.abs(w.x - nb.x) < tol) w.x = nb.x;
+      if (Math.abs(w.y - nb.y) < tol) w.y = nb.y;
+    });
+    return w;
+  }
+
+  /* ---------------- drawing ---------------- */
+  plan.draw = function () {
+    var c = plan.canvas;
+    if (!c) return;
+    var dpr = plan.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var cw = Math.max(1, Math.round(c.clientWidth * dpr)), ch = Math.max(1, Math.round(c.clientHeight * dpr));
+    if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+    var g = plan.ctx;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var W = cw / dpr, H = ch / dpr;
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = '#0b0d11'; g.fillRect(0, 0, W, H);
+
+    drawGrid(g, W, H);
+
+    var p = store.p.points, n = p.length;
+    if (!n) {
+      g.fillStyle = '#5a6579'; g.font = '13px system-ui'; g.textAlign = 'center';
+      g.fillText('No points yet — use Scan, Photo, or Add rectangle', W / 2, H / 2);
+      drawScaleBar(g, W, H);
+      return;
+    }
+
+    var S = p.map(W2S);
+
+    /* room fill */
+    if (n >= 3) {
+      g.beginPath();
+      S.forEach(function (s, i) { i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y); });
+      g.closePath();
+      g.fillStyle = 'rgba(57,208,168,0.07)';
+      g.fill();
+    }
+
+    /* walls */
+    for (var i = 0; i < n; i++) {
+      var a = S[i], b = S[(i + 1) % n];
+      if (n === 2 && i === 1) break;
+      var selEdge = plan.sel && plan.sel.type === 'edge' && plan.sel.i === i;
+      var locked = store.p.locks[i] != null;
+      g.strokeStyle = selEdge ? '#ffb64d' : (locked ? '#2b7fff' : '#39d0a8');
+      g.lineWidth = selEdge ? 4 : 2.5;
+      g.lineCap = 'round';
+      g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+      drawOpenings(g, i, p[i], p[(i + 1) % n]);
+      if (n >= 2) drawDim(g, p[i], p[(i + 1) % n], i, selEdge, locked);
+    }
+
+    /* vertices */
+    for (i = 0; i < n; i++) {
+      var s = S[i];
+      var selV = plan.sel && plan.sel.type === 'vertex' && plan.sel.i === i;
+      g.beginPath(); g.arc(s.x, s.y, selV ? 8 : 5.5, 0, 6.2832);
+      g.fillStyle = selV ? '#ffb64d' : '#0b0d11';
+      g.strokeStyle = selV ? '#ffb64d' : '#e8ecf3';
+      g.lineWidth = 2; g.fill(); g.stroke();
+      if (n >= 3 && plan.showAngles !== false) {
+        var ang = M.vertexAngle(p, i);
+        if (Math.abs(ang - 90) > 1.2) {
+          g.fillStyle = Math.abs(ang - 90) > 8 ? '#ffb64d' : '#9aa5b6';
+          g.font = '10px ui-monospace,monospace'; g.textAlign = 'center';
+          g.fillText(ang.toFixed(1) + '°', s.x, s.y - 12);
+        }
+      }
+    }
+
+    drawNorth(g, W);
+    drawScaleBar(g, W, H);
+  };
+
+  function drawGrid(g, W, H) {
+    var step = 1;
+    while (step * plan.view.scale < 34) step *= 2;
+    while (step * plan.view.scale > 120) step /= 2;
+    var tl = S2W({ x: 0, y: 0 }), br = S2W({ x: W, y: H });
+    g.lineWidth = 1;
+    for (var x = Math.floor(tl.x / step) * step; x <= br.x; x += step) {
+      var sx = W2S({ x: x, y: 0 }).x;
+      g.strokeStyle = Math.abs(x) < 1e-9 ? '#243040' : '#161b23';
+      g.beginPath(); g.moveTo(sx + 0.5, 0); g.lineTo(sx + 0.5, H); g.stroke();
+    }
+    for (var y = Math.floor(br.y / step) * step; y <= tl.y; y += step) {
+      var sy = W2S({ x: 0, y: y }).y;
+      g.strokeStyle = Math.abs(y) < 1e-9 ? '#243040' : '#161b23';
+      g.beginPath(); g.moveTo(0, sy + 0.5); g.lineTo(W, sy + 0.5); g.stroke();
+    }
+  }
+
+  function drawDim(g, A, B, i, sel, locked) {
+    var len = M.dist(A, B);
+    if (len < 1e-4) return;
+    var a = W2S(A), b = W2S(B);
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    var dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+    /* offset outward from centroid */
+    var cen = W2S(M.centroid(store.p.points));
+    var nx = -dy / L, ny = dx / L;
+    if ((mx - cen.x) * nx + (my - cen.y) * ny < 0) { nx = -nx; ny = -ny; }
+    var ox = mx + nx * 16, oy = my + ny * 16;
+    var ang = Math.atan2(dy, dx);
+    if (ang > Math.PI / 2 || ang < -Math.PI / 2) ang += Math.PI;
+    var txt = fmt(len) + (locked ? ' \u{1F512}' : '');
+    g.save();
+    g.translate(ox, oy); g.rotate(ang);
+    g.font = (sel ? '600 13px' : '12px') + ' ui-monospace,SFMono-Regular,Menlo,monospace';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    var w = g.measureText(txt).width + 8;
+    g.fillStyle = 'rgba(11,13,17,.85)';
+    g.fillRect(-w / 2, -9, w, 18);
+    g.fillStyle = sel ? '#ffb64d' : (locked ? '#7fb2ff' : '#cfd7e3');
+    g.fillText(txt, 0, 0);
+    g.restore();
+  }
+
+  function drawOpenings(g, i, A, B) {
+    var wall = store.p.walls[i];
+    if (!wall || !wall.openings || !wall.openings.length) return;
+    var L = M.dist(A, B);
+    if (L < 1e-6) return;
+    var ux = (B.x - A.x) / L, uy = (B.y - A.y) / L;
+    wall.openings.forEach(function (o) {
+      var p0 = { x: A.x + ux * o.off, y: A.y + uy * o.off };
+      var p1 = { x: A.x + ux * (o.off + o.w), y: A.y + uy * (o.off + o.w) };
+      var s0 = W2S(p0), s1 = W2S(p1);
+      g.strokeStyle = o.kind === 'door' ? '#ffb64d' : '#2b7fff';
+      g.lineWidth = 6; g.lineCap = 'butt';
+      g.beginPath(); g.moveTo(s0.x, s0.y); g.lineTo(s1.x, s1.y); g.stroke();
+      g.strokeStyle = '#0b0d11'; g.lineWidth = 2.5;
+      g.beginPath(); g.moveTo(s0.x, s0.y); g.lineTo(s1.x, s1.y); g.stroke();
+    });
+  }
+
+  function drawNorth(g, W) {
+    var x = W - 26, y = 26;
+    g.save();
+    g.translate(x, y);
+    g.strokeStyle = '#9aa5b6'; g.fillStyle = '#9aa5b6'; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(0, -12); g.lineTo(0, 12); g.stroke();
+    g.beginPath(); g.moveTo(0, -14); g.lineTo(-4, -6); g.lineTo(4, -6); g.closePath(); g.fill();
+    g.font = '9px system-ui'; g.textAlign = 'center';
+    g.fillText('N', 0, 22);
+    g.restore();
+  }
+
+  function drawScaleBar(g, W, H) {
+    var target = 90, step = 1;
+    while (step * plan.view.scale < target / 2) step *= 2;
+    while (step * plan.view.scale > target * 1.6) step /= 2;
+    var px = step * plan.view.scale;
+    var x0 = 14, y0 = H - 18;
+    g.strokeStyle = '#9aa5b6'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + px, y0);
+    g.moveTo(x0, y0 - 4); g.lineTo(x0, y0 + 4);
+    g.moveTo(x0 + px, y0 - 4); g.lineTo(x0 + px, y0 + 4);
+    g.stroke();
+    g.fillStyle = '#9aa5b6'; g.font = '11px ui-monospace,monospace'; g.textAlign = 'left';
+    g.fillText(fmt(step), x0 + px + 6, y0 + 4);
+  }
+
+  function fmt(m) {
+    var u = store.p.units;
+    if (u === 'mm') return Math.round(m * 1000) + ' mm';
+    if (u === 'ft') {
+      var tf = m * 3.280839895, ft = Math.floor(tf), inch = (tf - ft) * 12;
+      return ft + "' " + inch.toFixed(1) + '"';
+    }
+    return m.toFixed(m < 10 ? 3 : 2) + ' m';
+  }
+  plan.fmt = fmt;
+
+  RM.plan = plan;
+})();
+</script>
+<script>
+/* js/photo.js */
+/* photo.js — measure from a still photo using a known reference rectangle (homography)
+   Works with no sensors and no HTTPS. Namespace: RM.photo */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M, store = RM.store;
+
+  var photo = {
+    canvas: null, ctx: null, img: null,
+    mode: 'ref',            // 'ref' | 'corners' | 'wall'
+    ref: [],                // 4 image-space points of the known rectangle
+    refW: 0.297, refH: 0.210,
+    corners: [],            // image-space taps -> room corners
+    wallQuad: [],           // 4 image pts for wall rectification
+    H: null,                // image -> world (metres)
+    active: -1,
+    onchange: null,
+    _fit: null
+  };
+
+  photo.init = function (canvas) {
+    photo.canvas = canvas;
+    photo.ctx = canvas.getContext('2d');
+    bind(canvas);
+    photo.draw();
+  };
+
+  photo.setImage = function (src) {
+    return new Promise(function (res, rej) {
+      var im = new Image();
+      im.onload = function () {
+        photo.img = im;
+        photo.reset(true);
+        photo.draw();
+        res(im);
+      };
+      im.onerror = function () { rej(new Error('Could not load image')); };
+      im.src = src;
+    });
+  };
+
+  photo.reset = function (keepRef) {
+    if (!keepRef) { photo.ref = []; photo.H = null; }
+    photo.corners = [];
+    photo.wallQuad = [];
+    photo.active = -1;
+    emit();
+  };
+
+  photo.setMode = function (m) { photo.mode = m; photo.active = -1; photo.draw(); emit(); };
+
+  function emit() { if (photo.onchange) photo.onchange(photo); photo.draw(); }
+
+  /* ---------- canvas <-> image transforms ---------- */
+  function fit() {
+    var c = photo.canvas, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var cw = Math.max(1, Math.round(c.clientWidth * dpr)), ch = Math.max(1, Math.round(c.clientHeight * dpr));
+    if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+    var W = cw / dpr, H = ch / dpr;
+    if (!photo.img) return { s: 1, ox: 0, oy: 0, W: W, H: H, dpr: dpr };
+    var s = Math.min(W / photo.img.width, H / photo.img.height);
+    return {
+      s: s, W: W, H: H, dpr: dpr,
+      ox: (W - photo.img.width * s) / 2,
+      oy: (H - photo.img.height * s) / 2
+    };
+  }
+  function I2C(p) { var f = photo._fit; return { x: p.x * f.s + f.ox, y: p.y * f.s + f.oy }; }
+  function C2I(p) { var f = photo._fit; return { x: (p.x - f.ox) / f.s, y: (p.y - f.oy) / f.s }; }
+
+  /* ---------- input ---------- */
+  function bind(canvas) {
+    var dragging = -1, moved = 0, down = null;
+    function local(e) { var r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+    function list() {
+      return photo.mode === 'ref' ? photo.ref : photo.mode === 'wall' ? photo.wallQuad : photo.corners;
+    }
+    function maxPts() { return photo.mode === 'corners' ? 999 : 4; }
+
+    canvas.addEventListener('pointerdown', function (e) {
+      if (!photo.img) return;
+      canvas.setPointerCapture(e.pointerId);
+      down = local(e); moved = 0;
+      var L = list(), best = -1, bd = 30;
+      L.forEach(function (p, i) {
+        var s = I2C(p), d = Math.hypot(s.x - down.x, s.y - down.y);
+        if (d < bd) { bd = d; best = i; }
+      });
+      if (best >= 0) { dragging = best; photo.active = best; }
+      else if (L.length < maxPts()) {
+        L.push(C2I(down));
+        dragging = L.length - 1; photo.active = dragging;
+        if (photo.mode === 'ref' && L.length === 4) photo.solve();
+        emit();
+      }
+      photo.draw();
+    });
+
+    canvas.addEventListener('pointermove', function (e) {
+      if (dragging < 0 || !down) return;
+      var s = local(e);
+      moved = Math.max(moved, Math.hypot(s.x - down.x, s.y - down.y));
+      var L = list();
+      L[dragging] = C2I(s);
+      photo.touch = s;
+      if (photo.mode === 'ref' && photo.ref.length === 4) photo.solve();
+      photo.draw();
+    });
+
+    function end() {
+      if (dragging >= 0) { photo.touch = null; emit(); }
+      dragging = -1; down = null;
+      photo.draw();
+    }
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+  }
+
+  photo.undoPoint = function () {
+    var L = photo.mode === 'ref' ? photo.ref : photo.mode === 'wall' ? photo.wallQuad : photo.corners;
+    L.pop();
+    if (photo.mode === 'ref') photo.H = null;
+    photo.active = L.length - 1;
+    emit();
+  };
+
+  /* ---------- metrology ---------- */
+  photo.solve = function () {
+    if (photo.ref.length !== 4) { photo.H = null; return null; }
+    var dst = [{ x: 0, y: 0 }, { x: photo.refW, y: 0 }, { x: photo.refW, y: photo.refH }, { x: 0, y: photo.refH }];
+    photo.H = M.homography(photo.ref, dst);
+    return photo.H;
+  };
+
+  photo.world = function (imgPt) {
+    if (!photo.H) return null;
+    return M.applyH(photo.H, imgPt);
+  };
+
+  /* local scale in mm per image pixel — an honest precision indicator */
+  photo.precisionAt = function (imgPt) {
+    if (!photo.H) return null;
+    var a = photo.world(imgPt);
+    var b = photo.world({ x: imgPt.x + 1, y: imgPt.y });
+    var c = photo.world({ x: imgPt.x, y: imgPt.y + 1 });
+    if (!a || !b || !c) return null;
+    var s = Math.max(M.dist(a, b), M.dist(a, c));
+    return s * 1000;
+  };
+
+  photo.worldCorners = function () {
+    var out = [];
+    for (var i = 0; i < photo.corners.length; i++) {
+      var w = photo.world(photo.corners[i]);
+      if (w) out.push(w);
+    }
+    return out;
+  };
+
+  /* rectify the tapped wall quad into a texture of the given real-world aspect */
+  photo.rectifyWall = function (lenM, hM, px) {
+    if (photo.wallQuad.length !== 4 || !photo.img) return null;
+    px = px || 1024;
+    var aspect = Math.max(0.05, lenM / Math.max(0.05, hM));
+    var w = Math.round(px), h = Math.round(px / aspect);
+    var dst = [{ x: 0, y: h }, { x: w, y: h }, { x: w, y: 0 }, { x: 0, y: 0 }];  // BL,BR,TR,TL
+    var Hm = M.homography(dst, photo.wallQuad);                                   // dst -> image
+    if (!Hm) return null;
+    var src = document.createElement('canvas');
+    src.width = photo.img.width; src.height = photo.img.height;
+    src.getContext('2d').drawImage(photo.img, 0, 0);
+    var sd = src.getContext('2d').getImageData(0, 0, src.width, src.height);
+    var out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    var od = out.getContext('2d').createImageData(w, h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var p = M.applyH(Hm, { x: x + 0.5, y: y + 0.5 });
+        var o = (y * w + x) * 4;
+        if (!p) { od.data[o + 3] = 255; continue; }
+        var sx = Math.round(p.x), sy = Math.round(p.y);
+        if (sx < 0 || sy < 0 || sx >= src.width || sy >= src.height) { od.data[o + 3] = 255; continue; }
+        var so = (sy * src.width + sx) * 4;
+        od.data[o] = sd.data[so]; od.data[o + 1] = sd.data[so + 1];
+        od.data[o + 2] = sd.data[so + 2]; od.data[o + 3] = 255;
+      }
+    }
+    out.getContext('2d').putImageData(od, 0, 0);
+    return out.toDataURL('image/jpeg', 0.82);
+  };
+
+  /* ---------- drawing ---------- */
+  photo.draw = function () {
+    var c = photo.canvas;
+    if (!c) return;
+    photo._fit = fit();
+    var f = photo._fit, g = photo.ctx;
+    g.setTransform(f.dpr, 0, 0, f.dpr, 0, 0);
+    g.clearRect(0, 0, f.W, f.H);
+    if (!photo.img) {
+      g.fillStyle = '#12151b'; g.fillRect(0, 0, f.W, f.H);
+      g.fillStyle = '#5a6579'; g.font = '13px system-ui'; g.textAlign = 'center';
+      g.fillText('Take or choose a photo to begin', f.W / 2, f.H / 2);
+      return;
+    }
+    g.drawImage(photo.img, f.ox, f.oy, photo.img.width * f.s, photo.img.height * f.s);
+
+    if (photo.H && photo.mode !== 'wall') drawFloorGrid(g);
+
+    if (photo.ref.length) drawPoly(g, photo.ref, '#39d0a8', ['A', 'B', 'C', 'D'], photo.mode === 'ref');
+    if (photo.wallQuad.length) drawPoly(g, photo.wallQuad, '#2b7fff', ['BL', 'BR', 'TR', 'TL'], photo.mode === 'wall');
+    if (photo.corners.length) drawCorners(g);
+    if (photo.touch && photo.active >= 0) drawLoupe(g, f);
+  };
+
+  function drawPoly(g, pts, col, labels, activeMode) {
+    var S = pts.map(I2C);
+    g.strokeStyle = col; g.lineWidth = 2;
+    g.beginPath();
+    S.forEach(function (s, i) { i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y); });
+    if (S.length === 4) g.closePath();
+    g.stroke();
+    if (S.length === 4) { g.fillStyle = hexA(col, 0.13); g.fill(); }
+    S.forEach(function (s, i) {
+      g.beginPath(); g.arc(s.x, s.y, 9, 0, 6.2832);
+      g.fillStyle = 'rgba(11,13,17,.75)'; g.fill();
+      g.strokeStyle = col; g.lineWidth = 2; g.stroke();
+      g.beginPath(); g.arc(s.x, s.y, 1.6, 0, 6.2832); g.fillStyle = col; g.fill();
+      g.fillStyle = col; g.font = '10px ui-monospace,monospace'; g.textAlign = 'center';
+      g.fillText(labels[i] || (i + 1), s.x, s.y - 13);
+    });
+  }
+
+  function hexA(hex, a) {
+    var h = hex.replace('#', '');
+    var r = parseInt(h.substr(0, 2), 16), gg = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16);
+    return 'rgba(' + r + ',' + gg + ',' + b + ',' + a + ')';
+  }
+
+  function drawCorners(g) {
+    var S = photo.corners.map(I2C);
+    g.strokeStyle = '#ffb64d'; g.lineWidth = 2.5;
+    g.beginPath();
+    S.forEach(function (s, i) { i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y); });
+    if (S.length > 2) g.closePath();
+    g.stroke();
+    S.forEach(function (s, i) {
+      g.beginPath(); g.arc(s.x, s.y, 8, 0, 6.2832);
+      g.fillStyle = i === photo.active ? '#ffb64d' : 'rgba(11,13,17,.8)';
+      g.fill(); g.strokeStyle = '#ffb64d'; g.lineWidth = 2; g.stroke();
+      g.fillStyle = '#ffb64d'; g.font = '10px ui-monospace,monospace'; g.textAlign = 'center';
+      g.fillText(String(i + 1), s.x, s.y - 12);
+    });
+    /* live dimensions between consecutive corners */
+    if (photo.H && photo.corners.length > 1) {
+      for (var i = 0; i + 1 <= photo.corners.length - 1; i++) {
+        var a = photo.world(photo.corners[i]), b = photo.world(photo.corners[i + 1]);
+        if (!a || !b) continue;
+        var sa = I2C(photo.corners[i]), sb = I2C(photo.corners[i + 1]);
+        label(g, (sa.x + sb.x) / 2, (sa.y + sb.y) / 2, RM.plan.fmt(M.dist(a, b)), '#ffb64d');
+      }
+    }
+  }
+
+  function label(g, x, y, t, col) {
+    g.font = '600 11px ui-monospace,monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    var w = g.measureText(t).width + 10;
+    g.fillStyle = 'rgba(11,13,17,.86)';
+    g.fillRect(x - w / 2, y - 9, w, 18);
+    g.fillStyle = col; g.fillText(t, x, y);
+  }
+
+  /* project a 1 m floor grid back into the photo — visual proof the calibration is right */
+  function drawFloorGrid(g) {
+    var Hi = M.invert3(photo.H);
+    if (!Hi) return;
+    g.strokeStyle = 'rgba(57,208,168,.35)'; g.lineWidth = 1;
+    var R = 6;
+    for (var i = -R; i <= R; i++) {
+      seg(i, -R, i, R); seg(-R, i, R, i);
+    }
+    function seg(x0, y0, x1, y1) {
+      var N = 24;
+      g.beginPath();
+      for (var k = 0; k <= N; k++) {
+        var t = k / N;
+        var p = M.applyH(Hi, { x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t });
+        if (!p) return;
+        var s = I2C(p);
+        if (s.x < -4000 || s.x > 8000 || s.y < -4000 || s.y > 8000) return;
+        k ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y);
+      }
+      g.stroke();
+    }
+  }
+
+  function drawLoupe(g, f) {
+    var L = photo.mode === 'ref' ? photo.ref : photo.mode === 'wall' ? photo.wallQuad : photo.corners;
+    var p = L[photo.active];
+    if (!p) return;
+    var R = 52, z = 3.5;
+    var cx = photo.touch.x < f.W / 2 ? f.W - R - 12 : R + 12;
+    var cy = R + 12;
+    g.save();
+    g.beginPath(); g.arc(cx, cy, R, 0, 6.2832); g.closePath();
+    g.fillStyle = '#000'; g.fill();
+    g.clip();
+    var s = f.s * z;
+    g.drawImage(photo.img, cx - p.x * s, cy - p.y * s, photo.img.width * s, photo.img.height * s);
+    g.strokeStyle = 'rgba(57,208,168,.95)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+    g.restore();
+    g.beginPath(); g.arc(cx, cy, R, 0, 6.2832);
+    g.strokeStyle = '#39d0a8'; g.lineWidth = 2; g.stroke();
+  }
+
+  RM.photo = photo;
+})();
+</script>
+<script>
+/* js/scan.js */
+/* scan.js — live camera + tilt/heading measurement (ray / floor-plane intersection)
+   Namespace: RM.scan */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M, S = RM.S, store = RM.store;
+
+  var scan = {
+    video: null, canvas: null, ctx: null,
+    running: false,
+    station: { rot: 0, tx: 0, ty: 0 },   // local -> world (rigid)
+    stationIdx: 0,
+    reg: null,                           // {need:[worldIdxA,worldIdxB], got:[localPt,...]}
+    lastLocal: null,                     // last marked point in local frame
+    calibSamples: [],                    // {u,v,quat,dist}
+    onstatus: null,
+    quality: null
+  };
+
+  function qConj(q) { return [-q[0], -q[1], -q[2], q[3]]; }
+
+  scan.init = function (video, canvas) {
+    scan.video = video;
+    scan.canvas = canvas;
+    scan.ctx = canvas.getContext('2d');
+    canvas.addEventListener('pointerdown', function (e) {
+      var r = canvas.getBoundingClientRect();
+      scan.aim = { x: e.clientX - r.left, y: e.clientY - r.top };
+      scan.draw();
+    });
+    S.onUpdate(function () { if (scan.running) scan.draw(); });
+    tick();
+  };
+
+  function tick() {
+    if (scan.running) scan.draw();
+    requestAnimationFrame(tick);
+  }
+
+  scan.start = function () {
+    return S.openCamera(scan.video).then(function () {
+      scan.running = true;
+      return true;
+    });
+  };
+  scan.stop = function () {
+    scan.running = false;
+    S.closeCamera(scan.video);
+  };
+
+  /* ---------- geometry plumbing ---------- */
+  scan.cam = function () {
+    var W = scan.video.videoWidth || 1280, H = scan.video.videoHeight || 720;
+    return { W: W, H: H, f: store.p.calib.fRel * Math.max(W, H) };
+  };
+
+  scan.fovDeg = function () {
+    var c = scan.cam();
+    return 2 * Math.atan((c.W / 2) / c.f) * M.RAD;
+  };
+
+  /* display (canvas) coords -> video pixel coords, honouring object-fit:contain */
+  scan.toVideoPx = function (pt) {
+    var c = scan.canvas, cw = c.clientWidth, ch = c.clientHeight;
+    var vw = scan.video.videoWidth || cw, vh = scan.video.videoHeight || ch;
+    var s = Math.min(cw / vw, ch / vh);
+    var ox = (cw - vw * s) / 2, oy = (ch - vh * s) / 2;
+    return { x: (pt.x - ox) / s, y: (pt.y - oy) / s };
+  };
+  scan.toDisplay = function (pt) {
+    var c = scan.canvas, cw = c.clientWidth, ch = c.clientHeight;
+    var vw = scan.video.videoWidth || cw, vh = scan.video.videoHeight || ch;
+    var s = Math.min(cw / vw, ch / vh);
+    return { x: pt.x * s + (cw - vw * s) / 2, y: pt.y * s + (ch - vh * s) / 2 };
+  };
+
+  scan.aimPx = function () {
+    var c = scan.canvas;
+    var d = scan.aim || { x: c.clientWidth / 2, y: c.clientHeight / 2 };
+    return scan.toVideoPx(d);
+  };
+
+  /* floor point under the aim, in the LOCAL (station) frame */
+  scan.floorAtAim = function () {
+    var p = scan.aimPx();
+    return M.rayToFloor(p.x, p.y, scan.cam(), S.quat(), store.p.calib.camH);
+  };
+
+  scan.localToWorld = function (p) {
+    var s = scan.station, c = Math.cos(s.rot), si = Math.sin(s.rot);
+    return { x: c * p.x - si * p.y + s.tx, y: si * p.x + c * p.y + s.ty };
+  };
+  scan.worldToLocal = function (p) {
+    var s = scan.station, c = Math.cos(-s.rot), si = Math.sin(-s.rot);
+    var x = p.x - s.tx, y = p.y - s.ty;
+    return { x: c * x - si * y, y: si * x + c * y };
+  };
+
+  /* ---------- actions ---------- */
+  scan.markCorner = function () {
+    var f = scan.floorAtAim();
+    if (!f) return { ok: false, msg: 'Aim below the horizon — point at the floor where the walls meet.' };
+    if (f.range > 25) return { ok: false, msg: 'Too far / too close to the horizon to be reliable (' + f.range.toFixed(1) + ' m).' };
+    scan.lastLocal = { x: f.x, y: f.y };
+    if (scan.reg) return scan.registerPoint(f);
+    var w = scan.localToWorld(f);
+    store.addPoint(w);
+    return { ok: true, msg: 'Corner ' + store.p.points.length + ' at ' + f.range.toFixed(2) + ' m', range: f.range };
+  };
+
+  scan.measureHeightAtLast = function () {
+    if (!scan.lastLocal) return { ok: false, msg: 'Mark a floor corner first, then aim at the ceiling directly above it.' };
+    var p = scan.aimPx();
+    var h = M.rayToHeightAt(p.x, p.y, scan.cam(), S.quat(), store.p.calib.camH, scan.lastLocal);
+    if (h == null || h < 0.5 || h > 12) return { ok: false, msg: 'Could not resolve a sensible height — aim at the wall/ceiling line above the last corner.' };
+    store.setHeight(h);
+    return { ok: true, msg: 'Ceiling height ' + h.toFixed(3) + ' m', h: h };
+  };
+
+  /* distance between the last two captured world points (sanity check vs a tape) */
+  scan.lastSpan = function () {
+    var p = store.p.points;
+    if (p.length < 2) return null;
+    return M.dist(p[p.length - 2], p[p.length - 1]);
+  };
+
+  /* ---------- station re-registration (resection from 2 known corners) ---------- */
+  scan.beginStation = function (idxA, idxB) {
+    if (store.p.points.length < 2) return false;
+    scan.reg = { need: [idxA, idxB], got: [] };
+    return true;
+  };
+  scan.cancelStation = function () { scan.reg = null; };
+
+  scan.registerPoint = function (f) {
+    scan.reg.got.push({ x: f.x, y: f.y });
+    if (scan.reg.got.length < 2) {
+      return { ok: true, msg: 'Sighted reference 1 — now aim at corner ' + (scan.reg.need[1] + 1) + ' and mark.' };
+    }
+    var A = store.p.points[scan.reg.need[0]], B = store.p.points[scan.reg.need[1]];
+    var a = scan.reg.got[0], b = scan.reg.got[1];
+    var dW = Math.atan2(B.y - A.y, B.x - A.x), dL = Math.atan2(b.y - a.y, b.x - a.x);
+    var rot = dW - dL;
+    var c = Math.cos(rot), s = Math.sin(rot);
+    var tx = A.x - (c * a.x - s * a.y), ty = A.y - (s * a.x + c * a.y);
+    var lenW = M.dist(A, B), lenL = M.dist(a, b);
+    var err = lenW > 0 ? Math.abs(lenL - lenW) / lenW * 100 : 0;
+    scan.station = { rot: rot, tx: tx, ty: ty };
+    scan.stationIdx++;
+    scan.reg = null;
+    scan.quality = err;
+    return {
+      ok: true, quality: err,
+      msg: 'Station ' + (scan.stationIdx + 1) + ' set. Baseline check: ' + lenL.toFixed(3) + ' m vs ' + lenW.toFixed(3) +
+           ' m (' + err.toFixed(1) + '% ' + (err < 2 ? 'good' : err < 5 ? 'fair' : 'poor — recalibrate') + ')'
+    };
+  };
+
+  /* ---------- calibration ---------- */
+  /* one known ground distance + known camera height -> focal length */
+  scan.calibFocalFromDistance = function (knownDist) {
+    var p = scan.aimPx(), q = S.quat(), cam = scan.cam(), h = store.p.calib.camH;
+    var maxd = Math.max(cam.W, cam.H);
+    var best = null;
+    for (var i = 0; i <= 400; i++) {
+      var fRel = 0.30 + (3.2 - 0.30) * (i / 400);
+      var d = M.groundDistance(p.x, p.y, cam, q, h, fRel * maxd);
+      if (d == null) continue;
+      var e = Math.abs(d - knownDist);
+      if (!best || e < best.e) best = { e: e, fRel: fRel, d: d };
+    }
+    if (!best || best.e > knownDist * 0.25) {
+      return { ok: false, msg: 'No focal length fits that sighting. Check the camera height and that you aimed exactly at the measured mark.' };
+    }
+    /* local refine */
+    var lo = best.fRel - 0.02, hi = best.fRel + 0.02;
+    for (i = 0; i < 60; i++) {
+      var m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+      var e1 = Math.abs((M.groundDistance(p.x, p.y, cam, q, h, m1 * maxd) || 1e9) - knownDist);
+      var e2 = Math.abs((M.groundDistance(p.x, p.y, cam, q, h, m2 * maxd) || 1e9) - knownDist);
+      if (e1 < e2) hi = m2; else lo = m1;
+    }
+    var fRel = (lo + hi) / 2;
+    store.p.calib.fRel = M.round(fRel, 5);
+    store.p.calib.verified = true;
+    store.p.calib.fovDeg = M.round(2 * Math.atan((cam.W / 2) / (fRel * maxd)) * M.RAD, 1);
+    store.emit('calib');
+    return { ok: true, fRel: fRel, fov: store.p.calib.fovDeg, msg: 'Calibrated: ' + store.p.calib.fovDeg + '° horizontal FOV' };
+  };
+
+  /* two known ground distances -> focal length AND camera height (no tape on the phone) */
+  scan.addCalibSample = function (knownDist) {
+    var p = scan.aimPx();
+    scan.calibSamples.push({ u: p.x, v: p.y, quat: S.quat(), dist: knownDist });
+    return scan.calibSamples.length;
+  };
+
+  scan.solveTwoPoint = function () {
+    if (scan.calibSamples.length < 2) return { ok: false, msg: 'Need two sightings at two different known distances.' };
+    var s1 = scan.calibSamples[scan.calibSamples.length - 2], s2 = scan.calibSamples[scan.calibSamples.length - 1];
+    var cam = scan.cam(), maxd = Math.max(cam.W, cam.H);
+    var target = s1.dist / s2.dist, best = null;
+    for (var i = 0; i <= 600; i++) {
+      var fRel = 0.30 + (3.2 - 0.30) * (i / 600), f = fRel * maxd;
+      var g1 = M.groundDistance(s1.u, s1.v, cam, s1.quat, 1, f);
+      var g2 = M.groundDistance(s2.u, s2.v, cam, s2.quat, 1, f);
+      if (g1 == null || g2 == null || g2 < 1e-6) continue;
+      var e = Math.abs(g1 / g2 - target);
+      if (!best || e < best.e) best = { e: e, fRel: fRel, g1: g1 };
+    }
+    if (!best || best.e > 0.08) return { ok: false, msg: 'Those two sightings are inconsistent. Re-measure the distances and keep the phone still while marking.' };
+    var camH = s1.dist / best.g1;
+    if (!(camH > 0.3 && camH < 2.5)) return { ok: false, msg: 'Solved camera height (' + camH.toFixed(2) + ' m) is implausible — check the measured distances.' };
+    store.p.calib.fRel = M.round(best.fRel, 5);
+    store.p.calib.camH = M.round(camH, 3);
+    store.p.calib.verified = true;
+    store.p.calib.fovDeg = M.round(2 * Math.atan((cam.W / 2) / (best.fRel * maxd)) * M.RAD, 1);
+    store.emit('calib');
+    scan.calibSamples = [];
+    return { ok: true, msg: 'Solved: FOV ' + store.p.calib.fovDeg + '°, phone height ' + camH.toFixed(3) + ' m' };
+  };
+
+  /* ---------- overlay ---------- */
+  scan.projectWorld = function (P) {
+    var L = scan.worldToLocal(P), cam = scan.cam();
+    var v = [L.x, -store.p.calib.camH, -L.y];
+    var d = M.qRotate(qConj(S.quat()), v);
+    if (d[2] >= -0.05) return null;
+    var u = cam.W / 2 + cam.f * (d[0] / -d[2]);
+    var vv = cam.H / 2 - cam.f * (d[1] / -d[2]);
+    return scan.toDisplay({ x: u, y: vv });
+  };
+
+  scan.draw = function () {
+    var c = scan.canvas;
+    if (!c) return;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var cw = Math.max(1, Math.round(c.clientWidth * dpr)), ch = Math.max(1, Math.round(c.clientHeight * dpr));
+    if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+    var g = scan.ctx;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var W = cw / dpr, H = ch / dpr;
+    g.clearRect(0, 0, W, H);
+
+    /* previously measured corners, projected back into the live view */
+    var pts = store.p.points, prev = null;
+    for (var i = 0; i < pts.length; i++) {
+      var s = scan.projectWorld(pts[i]);
+      if (s) {
+        if (prev) {
+          g.strokeStyle = 'rgba(57,208,168,.65)'; g.lineWidth = 2;
+          g.beginPath(); g.moveTo(prev.x, prev.y); g.lineTo(s.x, s.y); g.stroke();
+        }
+        g.beginPath(); g.arc(s.x, s.y, 7, 0, 6.2832);
+        g.fillStyle = 'rgba(11,13,17,.7)'; g.fill();
+        g.strokeStyle = '#39d0a8'; g.lineWidth = 2; g.stroke();
+        g.fillStyle = '#39d0a8'; g.font = '10px ui-monospace,monospace'; g.textAlign = 'center';
+        g.fillText(String(i + 1), s.x, s.y - 11);
+      }
+      prev = s;
+    }
+
+    /* aim marker + live floor readout */
+    var aim = scan.aim || { x: W / 2, y: H / 2 };
+    var f = scan.floorAtAim();
+    var col = f ? '#39d0a8' : '#ff5d5d';
+    g.strokeStyle = col; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(aim.x - 16, aim.y); g.lineTo(aim.x - 5, aim.y);
+    g.moveTo(aim.x + 5, aim.y); g.lineTo(aim.x + 16, aim.y);
+    g.moveTo(aim.x, aim.y - 16); g.lineTo(aim.x, aim.y - 5);
+    g.moveTo(aim.x, aim.y + 5); g.lineTo(aim.x, aim.y + 16);
+    g.stroke();
+    g.beginPath(); g.arc(aim.x, aim.y, 20, 0, 6.2832); g.strokeStyle = col; g.lineWidth = 1; g.stroke();
+
+    if (f) {
+      var t = f.range.toFixed(2) + ' m';
+      g.font = '600 12px ui-monospace,monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      var w = g.measureText(t).width + 12;
+      g.fillStyle = 'rgba(11,13,17,.85)'; g.fillRect(aim.x - w / 2, aim.y + 26, w, 20);
+      g.fillStyle = col; g.fillText(t, aim.x, aim.y + 36);
+    }
+
+    /* horizon line */
+    var horizon = horizonY(W, H);
+    if (horizon != null && horizon > -50 && horizon < H + 50) {
+      g.strokeStyle = 'rgba(255,182,77,.5)'; g.lineWidth = 1; g.setLineDash([6, 6]);
+      g.beginPath(); g.moveTo(0, horizon); g.lineTo(W, horizon); g.stroke();
+      g.setLineDash([]);
+      g.fillStyle = 'rgba(255,182,77,.8)'; g.font = '10px system-ui'; g.textAlign = 'left';
+      g.fillText('horizon', 8, horizon - 5);
+    }
+
+    /* roll bubble */
+    var roll = S.roll();
+    g.save();
+    g.translate(W - 34, H - 34);
+    g.rotate(-roll * M.DEG);
+    g.strokeStyle = Math.abs(roll) < 3 ? '#39d0a8' : '#ffb64d'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(-16, 0); g.lineTo(16, 0); g.stroke();
+    g.restore();
+    g.beginPath(); g.arc(W - 34, H - 34, 20, 0, 6.2832);
+    g.strokeStyle = 'rgba(154,165,182,.4)'; g.lineWidth = 1; g.stroke();
+  };
+
+  function horizonY(W, H) {
+    /* pixel row where a horizontal ray leaves the camera */
+    var cam = scan.cam(), q = S.quat();
+    var lo = 0, hi = cam.H, mid;
+    var d0 = M.rayWorld(cam.W / 2, 0, cam, q)[1];
+    var d1 = M.rayWorld(cam.W / 2, cam.H, cam, q)[1];
+    if (!(d0 > 0 && d1 < 0)) return null;
+    for (var i = 0; i < 40; i++) {
+      mid = (lo + hi) / 2;
+      if (M.rayWorld(cam.W / 2, mid, cam, q)[1] > 0) lo = mid; else hi = mid;
+    }
+    return scan.toDisplay({ x: cam.W / 2, y: (lo + hi) / 2 }).y;
+  }
+
+  scan.grabFrame = function () {
+    var c = S.grabFrame(scan.video, 1600);
+    return c ? c.toDataURL('image/jpeg', 0.85) : null;
+  };
+
+  RM.scan = scan;
+})();
+</script>
+<script>
+/* js/render3d.js */
+/* render3d.js — dependency-free WebGL renderer + room mesh builder
+   Namespace: RM.R3 */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M;
+  var R3 = {};
+
+  /* ================= mat4 ================= */
+  function mIdent() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
+  function mMul(a, b) {
+    var o = new Float32Array(16);
+    for (var i = 0; i < 4; i++) for (var j = 0; j < 4; j++) {
+      o[i * 4 + j] = a[i * 4] * b[j] + a[i * 4 + 1] * b[4 + j] + a[i * 4 + 2] * b[8 + j] + a[i * 4 + 3] * b[12 + j];
+    }
+    return o;
+  }
+  function mPersp(fovy, asp, zn, zf) {
+    var f = 1 / Math.tan(fovy / 2), nf = 1 / (zn - zf), o = new Float32Array(16);
+    o[0] = f / asp; o[5] = f; o[10] = (zf + zn) * nf; o[11] = -1; o[14] = 2 * zf * zn * nf;
+    return o;
+  }
+  function mLook(eye, tgt, up) {
+    var zx = eye[0]-tgt[0], zy = eye[1]-tgt[1], zz = eye[2]-tgt[2];
+    var zl = Math.hypot(zx,zy,zz) || 1; zx/=zl; zy/=zl; zz/=zl;
+    var xx = up[1]*zz - up[2]*zy, xy = up[2]*zx - up[0]*zz, xz = up[0]*zy - up[1]*zx;
+    var xl = Math.hypot(xx,xy,xz) || 1; xx/=xl; xy/=xl; xz/=xl;
+    var yx = zy*xz - zz*xy, yy = zz*xx - zx*xz, yz = zx*xy - zy*xx;
+    return new Float32Array([
+      xx, yx, zx, 0,
+      xy, yy, zy, 0,
+      xz, yz, zz, 0,
+      -(xx*eye[0]+xy*eye[1]+xz*eye[2]), -(yx*eye[0]+yy*eye[1]+yz*eye[2]), -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1
+    ]);
+  }
+
+  /* ================= mesh building =================
+     World: X = plan x, Z = -plan y, Y = up (metres). */
+  function w3(p, y) { return [p.x, y, -p.y]; }
+
+  /* subtract rectangles (openings) from a wall face, in (s,t) wall coords */
+  function splitRects(rects, hole) {
+    var out = [];
+    rects.forEach(function (r) {
+      var x0 = Math.max(r.s0, hole.s0), x1 = Math.min(r.s1, hole.s1);
+      var y0 = Math.max(r.t0, hole.t0), y1 = Math.min(r.t1, hole.t1);
+      if (x1 <= x0 + 1e-6 || y1 <= y0 + 1e-6) { out.push(r); return; }   // no overlap
+      if (r.t1 > y1 + 1e-6) out.push({ s0: r.s0, s1: r.s1, t0: y1, t1: r.t1 });   // above
+      if (r.t0 < y0 - 1e-6) out.push({ s0: r.s0, s1: r.s1, t0: r.t0, t1: y0 });   // below
+      if (r.s0 < x0 - 1e-6) out.push({ s0: r.s0, s1: x0, t0: y0, t1: y1 });       // left
+      if (r.s1 > x1 + 1e-6) out.push({ s0: x1, s1: r.s1, t0: y0, t1: y1 });       // right
+    });
+    return out;
+  }
+
+  R3.buildMeshes = function (p, opts) {
+    opts = opts || {};
+    var meshes = [], n = p.points.length, H = p.height;
+    if (n < 3) return meshes;
+    var pts = M.ensureCCW(p.points.map(function (q) { return { x: q.x, y: q.y }; }));
+    var ccwFlip = M.signedArea(p.points) < 0;
+
+    /* ---- floor ---- */
+    var tri = M.triangulate(pts);
+    if (tri.length) {
+      var fp = [], fn = [], fu = [], fi = [];
+      for (var i = 0; i < pts.length; i++) {
+        var v = w3(pts[i], 0);
+        fp.push(v[0], v[1], v[2]); fn.push(0, 1, 0);
+        fu.push(pts[i].x / 1.0, pts[i].y / 1.0);
+      }
+      for (i = 0; i < tri.length; i += 3) fi.push(tri[i], tri[i + 2], tri[i + 1]);
+      meshes.push({ name: 'Floor', pos: fp, nrm: fn, uv: fu, idx: fi, color: [0.42, 0.36, 0.30], kind: 'floor' });
+
+      /* ---- ceiling ---- */
+      var cp = [], cn = [], cu = [], ci = [];
+      for (i = 0; i < pts.length; i++) {
+        var w = w3(pts[i], H);
+        cp.push(w[0], w[1], w[2]); cn.push(0, -1, 0); cu.push(pts[i].x, pts[i].y);
+      }
+      for (i = 0; i < tri.length; i += 3) ci.push(tri[i], tri[i + 1], tri[i + 2]);
+      meshes.push({ name: 'Ceiling', pos: cp, nrm: cn, uv: cu, idx: ci, color: [0.88, 0.88, 0.9], kind: 'ceiling' });
+    }
+
+    /* ---- walls ---- */
+    for (var e = 0; e < n; e++) {
+      var a = pts[e], b = pts[(e + 1) % n];
+      var L = M.dist(a, b);
+      if (L < 1e-4) continue;
+      var ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+      var nx = uy, ny = -ux;                       // inward normal for CCW polygon (plan)
+      /* map the reversed traverse back to the stored wall order */
+      var wallIndex = ccwFlip ? (((n - 2 - e) % n) + n) % n : e;
+      var wall = (p.walls && p.walls[wallIndex]) || { openings: [] };
+
+      var rects = [{ s0: 0, s1: L, t0: 0, t1: H }];
+      (wall.openings || []).forEach(function (o) {
+        var s0 = M.clamp(ccwFlip ? L - (o.off + o.w) : o.off, 0, L);
+        var s1 = M.clamp(s0 + o.w, 0, L);
+        rects = splitRects(rects, { s0: s0, s1: s1, t0: M.clamp(o.sill, 0, H), t1: M.clamp(o.head, 0, H) });
+      });
+
+      var wp = [], wn = [], wu = [], wi = [], base = 0;
+      var normal = [nx, 0, -ny];                    // world-space inward normal
+      rects.forEach(function (r) {
+        var quad = [
+          { s: r.s0, t: r.t0 }, { s: r.s1, t: r.t0 }, { s: r.s1, t: r.t1 }, { s: r.s0, t: r.t1 }
+        ];
+        quad.forEach(function (q) {
+          var px = a.x + ux * q.s, py = a.y + uy * q.s;
+          wp.push(px, q.t, -py);
+          wn.push(normal[0], 0, normal[2]);
+          wu.push(q.s / L, 1 - q.t / H);
+        });
+        wi.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        base += 4;
+      });
+      if (!wp.length) continue;
+
+      /* opening reveals: thin frame so windows/doors read as recesses */
+      meshes.push({
+        name: 'Wall ' + (wallIndex + 1), pos: wp, nrm: wn, uv: wu, idx: wi,
+        color: [0.80, 0.81, 0.84], kind: 'wall', wall: wallIndex, tex: wall.tex || null
+      });
+
+      (wall.openings || []).forEach(function (o) {
+        var s0 = M.clamp(ccwFlip ? L - (o.off + o.w) : o.off, 0, L), s1 = M.clamp(s0 + o.w, 0, L);
+        var t0 = M.clamp(o.sill, 0, H), t1 = M.clamp(o.head, 0, H);
+        var d = 0.12, gp = [], gn = [], gu = [], gi = [], bs = 0;
+        function face(q0, q1, q2, q3, nrm) {
+          [q0, q1, q2, q3].forEach(function (q) { gp.push(q[0], q[1], q[2]); gn.push(nrm[0], nrm[1], nrm[2]); gu.push(0, 0); });
+          gi.push(bs, bs + 1, bs + 2, bs, bs + 2, bs + 3); bs += 4;
+        }
+        function P(s, t, off) {
+          var px = a.x + ux * s - nx * off, py = a.y + uy * s - ny * off;
+          return [px, t, -py];
+        }
+        face(P(s0, t0, 0), P(s1, t0, 0), P(s1, t0, d), P(s0, t0, d), [0, 1, 0]);   // sill
+        face(P(s0, t1, 0), P(s0, t1, d), P(s1, t1, d), P(s1, t1, 0), [0, -1, 0]);  // head
+        face(P(s0, t0, 0), P(s0, t0, d), P(s0, t1, d), P(s0, t1, 0), [ux, 0, -uy]);
+        face(P(s1, t0, 0), P(s1, t1, 0), P(s1, t1, d), P(s1, t0, d), [-ux, 0, uy]);
+        meshes.push({
+          name: (o.kind === 'door' ? 'Door' : 'Window') + ' W' + (wallIndex + 1),
+          pos: gp, nrm: gn, uv: gu, idx: gi,
+          color: o.kind === 'door' ? [0.35, 0.27, 0.2] : [0.55, 0.68, 0.78], kind: 'reveal'
+        });
+      });
+    }
+    return meshes;
+  };
+
+  /* ================= renderer ================= */
+  var VS = [
+    'attribute vec3 aPos; attribute vec3 aNrm; attribute vec2 aUV;',
+    'uniform mat4 uVP; varying vec3 vN; varying vec2 vUV; varying vec3 vP;',
+    'void main(){ vN=aNrm; vUV=aUV; vP=aPos; gl_Position=uVP*vec4(aPos,1.0); }'
+  ].join('\n');
+
+  var FS = [
+    'precision mediump float;',
+    'varying vec3 vN; varying vec2 vUV; varying vec3 vP;',
+    'uniform vec3 uColor; uniform float uUseTex; uniform sampler2D uTex;',
+    'uniform float uUnlit; uniform float uGrid; uniform vec3 uEye;',
+    'void main(){',
+    '  vec3 base = uColor;',
+    '  if(uUseTex>0.5){ vec3 t = texture2D(uTex, vUV).rgb; base = t; }',
+    '  if(uUnlit>0.5){ gl_FragColor=vec4(base,1.0); return; }',
+    '  vec3 N = normalize(vN);',
+    '  vec3 L1 = normalize(vec3(0.45,0.85,0.30));',
+    '  vec3 L2 = normalize(vec3(-0.5,0.35,-0.7));',
+    '  float d1 = abs(dot(N,L1));',
+    '  float d2 = abs(dot(N,L2));',
+    '  float sky = 0.5+0.5*N.y;',
+    '  float lit = 0.30 + 0.55*d1 + 0.22*d2 + 0.12*sky;',
+    '  vec3 c = base*lit;',
+    '  float fog = clamp(length(vP-uEye)/45.0,0.0,1.0);',
+    '  c = mix(c, vec3(0.043,0.051,0.063), fog*0.55);',
+    '  gl_FragColor = vec4(pow(c, vec3(0.85)),1.0);',
+    '}'
+  ].join('\n');
+
+  function compile(gl, type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+
+  R3.Viewer = function (canvas) {
+    var self = this;
+    this.canvas = canvas;
+    var gl = canvas.getContext('webgl', { antialias: true, alpha: false, preserveDrawingBuffer: true }) ||
+             canvas.getContext('experimental-webgl', { antialias: true, alpha: false, preserveDrawingBuffer: true });
+    if (!gl) throw new Error('WebGL not available on this device/browser');
+    this.gl = gl;
+    var prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl, gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, compile(gl, gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    this.prog = prog;
+    this.loc = {
+      aPos: gl.getAttribLocation(prog, 'aPos'),
+      aNrm: gl.getAttribLocation(prog, 'aNrm'),
+      aUV: gl.getAttribLocation(prog, 'aUV'),
+      uVP: gl.getUniformLocation(prog, 'uVP'),
+      uColor: gl.getUniformLocation(prog, 'uColor'),
+      uUseTex: gl.getUniformLocation(prog, 'uUseTex'),
+      uTex: gl.getUniformLocation(prog, 'uTex'),
+      uUnlit: gl.getUniformLocation(prog, 'uUnlit'),
+      uEye: gl.getUniformLocation(prog, 'uEye')
+    };
+    gl.enable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.clearColor(0.043, 0.051, 0.063, 1);
+
+    this.objs = [];
+    this.grid = null;
+    this.show = { ceiling: false, tex: true, grid: true, edges: true };
+    this.cam = { r: 8, th: -0.9, ph: 0.85, tgt: [0, 1.2, 0] };
+    this.dirty = true;
+
+    /* -------- interaction -------- */
+    var pts = {}, last = null, pinch = null;
+    function pos(e) { return [e.clientX, e.clientY]; }
+    canvas.addEventListener('pointerdown', function (e) {
+      canvas.setPointerCapture(e.pointerId);
+      pts[e.pointerId] = pos(e);
+      var k = Object.keys(pts);
+      if (k.length === 1) last = pts[e.pointerId];
+      else if (k.length === 2) {
+        pinch = { d: dist2(pts[k[0]], pts[k[1]]), c: mid2(pts[k[0]], pts[k[1]]) };
+      }
+    });
+    function dist2(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+    function mid2(a, b) { return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; }
+    canvas.addEventListener('pointermove', function (e) {
+      if (!(e.pointerId in pts)) return;
+      pts[e.pointerId] = pos(e);
+      var k = Object.keys(pts);
+      if (k.length === 1 && last) {
+        var p = pts[e.pointerId];
+        var dx = p[0] - last[0], dy = p[1] - last[1];
+        self.cam.th -= dx * 0.007;
+        self.cam.ph = M.clamp(self.cam.ph - dy * 0.007, -1.45, 1.45);
+        last = p; self.dirty = true;
+      } else if (k.length === 2 && pinch) {
+        var d = dist2(pts[k[0]], pts[k[1]]), c = mid2(pts[k[0]], pts[k[1]]);
+        self.cam.r = M.clamp(self.cam.r * (pinch.d / (d || 1)), 0.4, 120);
+        var pdx = c[0] - pinch.c[0], pdy = c[1] - pinch.c[1];
+        self.panBy(-pdx * 0.004 * self.cam.r, pdy * 0.004 * self.cam.r);
+        pinch = { d: d, c: c }; self.dirty = true;
+      }
+    });
+    function up(e) { delete pts[e.pointerId]; last = null; pinch = null; }
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      self.cam.r = M.clamp(self.cam.r * (1 + Math.sign(e.deltaY) * 0.12), 0.4, 120);
+      self.dirty = true;
+    }, { passive: false });
+
+    this.panBy = function (dx, dz) {
+      var th = self.cam.th;
+      var rx = Math.cos(th), rz = -Math.sin(th);
+      var fx = Math.sin(th), fz = Math.cos(th);
+      self.cam.tgt[0] += rx * dx + fx * dz;
+      self.cam.tgt[2] += rz * dx + fz * dz;
+    };
+
+    /* -------- render loop -------- */
+    function frame() {
+      if (self.dirty) { self.draw(); self.dirty = false; }
+      self._raf = requestAnimationFrame(frame);
+    }
+    frame();
+  };
+
+  R3.Viewer.prototype.upload = function (meshes) {
+    var gl = this.gl, self = this;
+    this.objs.forEach(function (o) {
+      gl.deleteBuffer(o.bp); gl.deleteBuffer(o.bn); gl.deleteBuffer(o.bu); gl.deleteBuffer(o.bi);
+      if (o.tex) gl.deleteTexture(o.tex);
+      if (o.be) gl.deleteBuffer(o.be);
+    });
+    this.objs = [];
+    meshes.forEach(function (m) {
+      var o = { name: m.name, kind: m.kind, color: m.color, count: m.idx.length, wall: m.wall };
+      o.bp = buf(gl, new Float32Array(m.pos));
+      o.bn = buf(gl, new Float32Array(m.nrm));
+      o.bu = buf(gl, new Float32Array(m.uv));
+      o.bi = ibuf(gl, m.pos.length / 3 > 65535 ? new Uint32Array(m.idx) : new Uint16Array(m.idx));
+      o.itype = (m.pos.length / 3 > 65535) ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
+      /* wireframe edges */
+      var el = [];
+      for (var i = 0; i < m.idx.length; i += 3) {
+        el.push(m.idx[i], m.idx[i + 1], m.idx[i + 1], m.idx[i + 2], m.idx[i + 2], m.idx[i]);
+      }
+      o.be = ibuf(gl, new Uint16Array(el)); o.ecount = el.length;
+      if (m.tex) {
+        var img = new Image();
+        img.onload = function () {
+          o.tex = mkTex(gl, img);
+          self.dirty = true;
+        };
+        img.src = m.tex;
+      }
+      self.objs.push(o);
+    });
+    this.buildGrid();
+    this.dirty = true;
+  };
+
+  function buf(gl, arr) {
+    var b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW);
+    return b;
+  }
+  function ibuf(gl, arr) {
+    var b = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, arr, gl.STATIC_DRAW);
+    return b;
+  }
+  function mkTex(gl, img) {
+    var t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    return t;
+  }
+
+  R3.Viewer.prototype.buildGrid = function () {
+    var gl = this.gl, v = [], N = 20, S = 1;
+    for (var i = -N; i <= N; i++) {
+      v.push(-N * S, 0, i * S, N * S, 0, i * S);
+      v.push(i * S, 0, -N * S, i * S, 0, N * S);
+    }
+    if (this.grid) gl.deleteBuffer(this.grid.b);
+    this.grid = { b: buf(gl, new Float32Array(v)), count: v.length / 3 };
+  };
+
+  R3.Viewer.prototype.fit = function (p) {
+    if (!p.points.length) return;
+    var c = M.centroid(p.points), rad = 0;
+    p.points.forEach(function (q) { rad = Math.max(rad, M.dist(q, c)); });
+    this.cam.tgt = [c.x, p.height * 0.45, -c.y];
+    this.cam.r = Math.max(3.2, rad * 2.6 + 2);
+    this.cam.th = -0.9; this.cam.ph = 0.72;
+    this.dirty = true;
+  };
+
+  R3.Viewer.prototype.inside = function (p) {
+    if (!p.points.length) return;
+    var c = M.centroid(p.points);
+    this.cam.tgt = [c.x, p.height * 0.5, -c.y];
+    this.cam.r = 0.6; this.cam.ph = 0.05;
+    this.dirty = true;
+  };
+
+  R3.Viewer.prototype.top = function (p) {
+    if (!p.points.length) return;
+    var c = M.centroid(p.points), rad = 1;
+    p.points.forEach(function (q) { rad = Math.max(rad, M.dist(q, c)); });
+    this.cam.tgt = [c.x, 0, -c.y];
+    this.cam.r = rad * 2.4 + 1.5;
+    this.cam.ph = 1.42; this.cam.th = 0;
+    this.dirty = true;
+  };
+
+  R3.Viewer.prototype.resize = function () {
+    var c = this.canvas, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = Math.max(1, Math.round(c.clientWidth * dpr)), h = Math.max(1, Math.round(c.clientHeight * dpr));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; this.dirty = true; }
+  };
+
+  R3.Viewer.prototype.draw = function () {
+    var gl = this.gl, L = this.loc;
+    this.resize();
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    var asp = this.canvas.width / Math.max(1, this.canvas.height);
+    var cm = this.cam;
+    var eye = [
+      cm.tgt[0] + cm.r * Math.cos(cm.ph) * Math.sin(cm.th),
+      cm.tgt[1] + cm.r * Math.sin(cm.ph),
+      cm.tgt[2] + cm.r * Math.cos(cm.ph) * Math.cos(cm.th)
+    ];
+    var vp = mMul(mLook(eye, cm.tgt, [0, 1, 0]), mPersp(58 * M.DEG, asp, 0.03, 400));
+    gl.uniformMatrix4fv(L.uVP, false, vp);
+    gl.uniform3f(L.uEye, eye[0], eye[1], eye[2]);
+
+    var self = this;
+    function bind(o) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, o.bp); gl.enableVertexAttribArray(L.aPos); gl.vertexAttribPointer(L.aPos, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, o.bn); gl.enableVertexAttribArray(L.aNrm); gl.vertexAttribPointer(L.aNrm, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, o.bu); gl.enableVertexAttribArray(L.aUV); gl.vertexAttribPointer(L.aUV, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    /* grid */
+    if (this.show.grid && this.grid) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.grid.b);
+      gl.enableVertexAttribArray(L.aPos); gl.vertexAttribPointer(L.aPos, 3, gl.FLOAT, false, 0, 0);
+      gl.disableVertexAttribArray(L.aNrm); gl.disableVertexAttribArray(L.aUV);
+      gl.vertexAttrib3f(L.aNrm, 0, 1, 0); gl.vertexAttrib2f(L.aUV, 0, 0);
+      gl.uniform3f(L.uColor, 0.14, 0.17, 0.22);
+      gl.uniform1f(L.uUseTex, 0); gl.uniform1f(L.uUnlit, 1);
+      gl.drawArrays(gl.LINES, 0, this.grid.count);
+    }
+
+    this.objs.forEach(function (o) {
+      if (o.kind === 'ceiling' && !self.show.ceiling) return;
+      bind(o);
+      gl.uniform3f(L.uColor, o.color[0], o.color[1], o.color[2]);
+      gl.uniform1f(L.uUnlit, 0);
+      if (o.tex && self.show.tex) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, o.tex);
+        gl.uniform1i(L.uTex, 0);
+        gl.uniform1f(L.uUseTex, 1);
+      } else gl.uniform1f(L.uUseTex, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, o.bi);
+      gl.drawElements(gl.TRIANGLES, o.count, o.itype, 0);
+
+      if (self.show.edges) {
+        gl.uniform1f(L.uUseTex, 0); gl.uniform1f(L.uUnlit, 1);
+        gl.uniform3f(L.uColor, 0.10, 0.13, 0.17);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, o.be);
+        gl.drawElements(gl.LINES, o.ecount, gl.UNSIGNED_SHORT, 0);
+      }
+    });
+  };
+
+  R3.Viewer.prototype.snapshot = function () {
+    this.draw();
+    return this.canvas.toDataURL('image/png');
+  };
+
+  RM.R3 = R3;
+})();
+</script>
+<script>
+/* js/exporters.js */
+/* exporters.js — GLB, OBJ+MTL (zip), SVG plan, CSV schedule, JSON project
+   Namespace: RM.X */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M, store = RM.store, R3 = RM.R3;
+  var X = {};
+
+  /* ---------------- download / share ---------------- */
+  X.download = function (blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
+  };
+
+  X.share = function (blob, filename, title) {
+    try {
+      var file = new File([blob], filename, { type: blob.type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        return navigator.share({ files: [file], title: title || filename });
+      }
+    } catch (e) {}
+    X.download(blob, filename);
+    return Promise.resolve();
+  };
+
+  function b64ToBytes(dataURL) {
+    var i = dataURL.indexOf(',');
+    var bin = atob(dataURL.slice(i + 1));
+    var out = new Uint8Array(bin.length);
+    for (var k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k);
+    return out;
+  }
+
+  function safeName() {
+    return (store.p.name || 'room').replace(/[^\w\-. ]+/g, '_').replace(/\s+/g, '_');
+  }
+  X.safeName = safeName;
+
+  /* ---------------- GLB (binary glTF 2.0, textures embedded) ---------------- */
+  X.glb = function () {
+    var meshes = R3.buildMeshes(store.p, {});
+    if (!meshes.length) throw new Error('Nothing to export — the room needs at least 3 corners.');
+
+    var bin = [], byteLen = 0;
+    function push(view) {
+      while (byteLen % 4) { bin.push(new Uint8Array([0])); byteLen += 1; }
+      var off = byteLen;
+      var u8 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+      bin.push(u8); byteLen += u8.byteLength;
+      return off;
+    }
+
+    var json = {
+      asset: { version: '2.0', generator: 'RoomScan (browser single-view metrology)' },
+      scene: 0, scenes: [{ nodes: [] }], nodes: [], meshes: [],
+      materials: [], accessors: [], bufferViews: [], buffers: [],
+      images: [], samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 33071, wrapT: 33071 }], textures: []
+    };
+
+    function addBufferView(view, target) {
+      var off = push(view);
+      json.bufferViews.push({ buffer: 0, byteOffset: off, byteLength: view.byteLength, target: target });
+      return json.bufferViews.length - 1;
+    }
+    function addAccessor(view, type, comp, count, minmax, target) {
+      var bv = addBufferView(view, target);
+      var a = { bufferView: bv, componentType: comp, count: count, type: type };
+      if (minmax) { a.min = minmax.min; a.max = minmax.max; }
+      json.accessors.push(a);
+      return json.accessors.length - 1;
+    }
+
+    var texCache = {};
+    meshes.forEach(function (m) {
+      var pos = new Float32Array(m.pos), nrm = new Float32Array(m.nrm), uv = new Float32Array(m.uv);
+      var idx = new Uint32Array(m.idx);
+      var min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+      for (var i = 0; i < pos.length; i += 3) {
+        for (var k = 0; k < 3; k++) {
+          min[k] = Math.min(min[k], pos[i + k]);
+          max[k] = Math.max(max[k], pos[i + k]);
+        }
+      }
+      var aPos = addAccessor(pos, 'VEC3', 5126, pos.length / 3, { min: min, max: max }, 34962);
+      var aNrm = addAccessor(nrm, 'VEC3', 5126, nrm.length / 3, null, 34962);
+      var aUV = addAccessor(uv, 'VEC2', 5126, uv.length / 2, null, 34962);
+      var aIdx = addAccessor(idx, 'SCALAR', 5125, idx.length, null, 34963);
+
+      var mat = {
+        name: m.name,
+        doubleSided: true,
+        pbrMetallicRoughness: {
+          baseColorFactor: [m.color[0], m.color[1], m.color[2], 1],
+          metallicFactor: 0.0, roughnessFactor: 0.92
+        }
+      };
+      if (m.tex) {
+        var ti = texCache[m.tex];
+        if (ti == null) {
+          var bytes = b64ToBytes(m.tex);
+          var bv = addBufferView(bytes, undefined);
+          json.images.push({ bufferView: bv, mimeType: m.tex.indexOf('image/png') >= 0 ? 'image/png' : 'image/jpeg' });
+          json.textures.push({ sampler: 0, source: json.images.length - 1 });
+          ti = json.textures.length - 1;
+          texCache[m.tex] = ti;
+        }
+        mat.pbrMetallicRoughness.baseColorTexture = { index: ti };
+        mat.pbrMetallicRoughness.baseColorFactor = [1, 1, 1, 1];
+      }
+      json.materials.push(mat);
+      json.meshes.push({
+        name: m.name,
+        primitives: [{
+          attributes: { POSITION: aPos, NORMAL: aNrm, TEXCOORD_0: aUV },
+          indices: aIdx, material: json.materials.length - 1, mode: 4
+        }]
+      });
+      json.nodes.push({ mesh: json.meshes.length - 1, name: m.name });
+      json.scenes[0].nodes.push(json.nodes.length - 1);
+    });
+
+    while (byteLen % 4) { bin.push(new Uint8Array([0])); byteLen += 1; }
+    json.buffers.push({ byteLength: byteLen });
+
+    var jsonStr = JSON.stringify(json);
+    var jsonBytes = new TextEncoder().encode(jsonStr);
+    var jsonPad = (4 - (jsonBytes.length % 4)) % 4;
+    var binPad = (4 - (byteLen % 4)) % 4;
+    var total = 12 + 8 + jsonBytes.length + jsonPad + 8 + byteLen + binPad;
+
+    var out = new Uint8Array(total);
+    var dv = new DataView(out.buffer);
+    var o = 0;
+    dv.setUint32(o, 0x46546C67, true); o += 4;     // 'glTF'
+    dv.setUint32(o, 2, true); o += 4;
+    dv.setUint32(o, total, true); o += 4;
+    dv.setUint32(o, jsonBytes.length + jsonPad, true); o += 4;
+    dv.setUint32(o, 0x4E4F534A, true); o += 4;     // 'JSON'
+    out.set(jsonBytes, o); o += jsonBytes.length;
+    for (var i = 0; i < jsonPad; i++) out[o++] = 0x20;
+    dv.setUint32(o, byteLen + binPad, true); o += 4;
+    dv.setUint32(o, 0x004E4942, true); o += 4;     // 'BIN'
+    bin.forEach(function (u8) { out.set(u8, o); o += u8.byteLength; });
+    return new Blob([out], { type: 'model/gltf-binary' });
+  };
+
+  /* ---------------- OBJ + MTL (+textures) as a zip ---------------- */
+  X.objFiles = function () {
+    var meshes = R3.buildMeshes(store.p, {});
+    if (!meshes.length) throw new Error('Nothing to export — the room needs at least 3 corners.');
+    var name = safeName();
+    var obj = ['# ' + name + ' — exported by RoomScan', 'mtllib ' + name + '.mtl'];
+    var mtl = ['# ' + name];
+    var files = [];
+    var vBase = 1, nBase = 1, tBase = 1, ti = 0;
+
+    meshes.forEach(function (m, mi) {
+      var mn = 'mat' + mi;
+      obj.push('o ' + m.name.replace(/\s+/g, '_'));
+      for (var i = 0; i < m.pos.length; i += 3) obj.push('v ' + f(m.pos[i]) + ' ' + f(m.pos[i + 1]) + ' ' + f(m.pos[i + 2]));
+      for (i = 0; i < m.uv.length; i += 2) obj.push('vt ' + f(m.uv[i]) + ' ' + f(m.uv[i + 1]));
+      for (i = 0; i < m.nrm.length; i += 3) obj.push('vn ' + f(m.nrm[i]) + ' ' + f(m.nrm[i + 1]) + ' ' + f(m.nrm[i + 2]));
+      obj.push('usemtl ' + mn);
+      for (i = 0; i < m.idx.length; i += 3) {
+        var a = m.idx[i] + vBase, b = m.idx[i + 1] + vBase, c = m.idx[i + 2] + vBase;
+        var at = m.idx[i] + tBase, bt = m.idx[i + 1] + tBase, ct = m.idx[i + 2] + tBase;
+        var an = m.idx[i] + nBase, bn = m.idx[i + 1] + nBase, cn = m.idx[i + 2] + nBase;
+        obj.push('f ' + a + '/' + at + '/' + an + ' ' + b + '/' + bt + '/' + bn + ' ' + c + '/' + ct + '/' + cn);
+      }
+      vBase += m.pos.length / 3; tBase += m.uv.length / 2; nBase += m.nrm.length / 3;
+
+      mtl.push('newmtl ' + mn);
+      mtl.push('Kd ' + f(m.color[0]) + ' ' + f(m.color[1]) + ' ' + f(m.color[2]));
+      mtl.push('Ka 0.1 0.1 0.1', 'Ks 0.02 0.02 0.02', 'Ns 8', 'd 1', 'illum 2');
+      if (m.tex) {
+        var fn = 'tex' + (ti++) + '.jpg';
+        files.push({ name: fn, data: b64ToBytes(m.tex) });
+        mtl.push('map_Kd ' + fn);
+      }
+      mtl.push('');
+    });
+    function f(v) { return (Math.round(v * 1e5) / 1e5).toString(); }
+    var enc = new TextEncoder();
+    files.unshift({ name: name + '.mtl', data: enc.encode(mtl.join('\n')) });
+    files.unshift({ name: name + '.obj', data: enc.encode(obj.join('\n')) });
+    return files;
+  };
+
+  /* minimal store-only ZIP */
+  var CRC = (function () {
+    var t = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return function (buf) {
+      var c = 0xFFFFFFFF;
+      for (var i = 0; i < buf.length; i++) c = t[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+      return (c ^ 0xFFFFFFFF) >>> 0;
+    };
+  })();
+
+  X.zip = function (files) {
+    var parts = [], central = [], offset = 0;
+    var enc = new TextEncoder();
+    files.forEach(function (f) {
+      var nameB = enc.encode(f.name), data = f.data, crc = CRC(data);
+      var lh = new Uint8Array(30 + nameB.length);
+      var dv = new DataView(lh.buffer);
+      dv.setUint32(0, 0x04034b50, true);
+      dv.setUint16(4, 20, true); dv.setUint16(6, 0, true); dv.setUint16(8, 0, true);
+      dv.setUint16(10, 0, true); dv.setUint16(12, 0x2821, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, data.length, true); dv.setUint32(22, data.length, true);
+      dv.setUint16(26, nameB.length, true); dv.setUint16(28, 0, true);
+      lh.set(nameB, 30);
+      parts.push(lh, data);
+
+      var ch = new Uint8Array(46 + nameB.length);
+      var cv = new DataView(ch.buffer);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0, true); cv.setUint16(10, 0, true);
+      cv.setUint16(12, 0, true); cv.setUint16(14, 0x2821, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
+      cv.setUint16(28, nameB.length, true);
+      cv.setUint32(42, offset, true);
+      ch.set(nameB, 46);
+      central.push(ch);
+      offset += lh.length + data.length;
+    });
+    var cSize = central.reduce(function (s, c) { return s + c.length; }, 0);
+    var end = new Uint8Array(22);
+    var ev = new DataView(end.buffer);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+    ev.setUint32(12, cSize, true); ev.setUint32(16, offset, true);
+    return new Blob(parts.concat(central, [end]), { type: 'application/zip' });
+  };
+
+  /* ---------------- SVG floor plan ---------------- */
+  X.svg = function () {
+    var p = store.p, pts = p.points, n = pts.length;
+    if (n < 3) throw new Error('Need at least 3 corners for a plan.');
+    var minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+    pts.forEach(function (q) {
+      minx = Math.min(minx, q.x); maxx = Math.max(maxx, q.x);
+      miny = Math.min(miny, q.y); maxy = Math.max(maxy, q.y);
+    });
+    var pad = 90, W = 1000, Hh = 720;
+    var s = Math.min((W - 2 * pad) / Math.max(0.001, maxx - minx), (Hh - 2 * pad - 60) / Math.max(0.001, maxy - miny));
+    function T(q) { return { x: pad + (q.x - minx) * s, y: Hh - 60 - pad - (q.y - miny) * s }; }
+    var S = pts.map(T);
+    var st = store.stats(), walls = store.wallList();
+
+    var o = [];
+    o.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + Hh + '" viewBox="0 0 ' + W + ' ' + Hh + '">');
+    o.push('<rect width="100%" height="100%" fill="#ffffff"/>');
+    o.push('<g stroke="#e6e9ef" stroke-width="1">');
+    for (var gx = Math.ceil(minx); gx <= maxx; gx++) {
+      var a = T({ x: gx, y: miny }), b = T({ x: gx, y: maxy });
+      o.push('<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + b.x.toFixed(1) + '" y2="' + b.y.toFixed(1) + '"/>');
+    }
+    for (var gy = Math.ceil(miny); gy <= maxy; gy++) {
+      var c = T({ x: minx, y: gy }), d = T({ x: maxx, y: gy });
+      o.push('<line x1="' + c.x.toFixed(1) + '" y1="' + c.y.toFixed(1) + '" x2="' + d.x.toFixed(1) + '" y2="' + d.y.toFixed(1) + '"/>');
+    }
+    o.push('</g>');
+
+    o.push('<polygon points="' + S.map(function (q) { return q.x.toFixed(1) + ',' + q.y.toFixed(1); }).join(' ') +
+           '" fill="#f2f5f9" stroke="#12161d" stroke-width="4" stroke-linejoin="round"/>');
+
+    /* openings */
+    walls.forEach(function (w) {
+      var A = w.a, B = w.b, L = w.len;
+      if (L < 1e-6) return;
+      var ux = (B.x - A.x) / L, uy = (B.y - A.y) / L;
+      w.openings.forEach(function (op) {
+        var q0 = T({ x: A.x + ux * op.off, y: A.y + uy * op.off });
+        var q1 = T({ x: A.x + ux * (op.off + op.w), y: A.y + uy * (op.off + op.w) });
+        o.push('<line x1="' + q0.x.toFixed(1) + '" y1="' + q0.y.toFixed(1) + '" x2="' + q1.x.toFixed(1) + '" y2="' + q1.y.toFixed(1) +
+               '" stroke="' + (op.kind === 'door' ? '#e08600' : '#2b7fff') + '" stroke-width="7"/>');
+        o.push('<line x1="' + q0.x.toFixed(1) + '" y1="' + q0.y.toFixed(1) + '" x2="' + q1.x.toFixed(1) + '" y2="' + q1.y.toFixed(1) +
+               '" stroke="#ffffff" stroke-width="3"/>');
+      });
+    });
+
+    /* dimension labels */
+    var cen = T(M.centroid(pts));
+    walls.forEach(function (w, i) {
+      var A = T(w.a), B = T(w.b);
+      var mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+      var dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy) || 1;
+      var nx = -dy / L, ny = dx / L;
+      if ((mx - cen.x) * nx + (my - cen.y) * ny < 0) { nx = -nx; ny = -ny; }
+      var tx = mx + nx * 22, ty = my + ny * 22;
+      var ang = Math.atan2(dy, dx) * M.RAD;
+      if (ang > 90 || ang < -90) ang += 180;
+      o.push('<text x="' + tx.toFixed(1) + '" y="' + ty.toFixed(1) + '" transform="rotate(' + ang.toFixed(1) + ' ' + tx.toFixed(1) + ' ' + ty.toFixed(1) + ')" ' +
+             'font-family="monospace" font-size="15" fill="#12161d" text-anchor="middle" dominant-baseline="middle">' +
+             fmtPlain(w.len) + '</text>');
+      o.push('<text x="' + ((A.x + B.x) / 2 - nx * 16).toFixed(1) + '" y="' + ((A.y + B.y) / 2 - ny * 16).toFixed(1) +
+             '" font-family="sans-serif" font-size="11" fill="#8a94a6" text-anchor="middle">W' + (i + 1) + '</text>');
+    });
+
+    /* title block */
+    var y0 = Hh - 46;
+    o.push('<line x1="0" y1="' + (y0 - 16) + '" x2="' + W + '" y2="' + (y0 - 16) + '" stroke="#c9d2de"/>');
+    o.push('<text x="20" y="' + y0 + '" font-family="sans-serif" font-size="16" font-weight="600" fill="#12161d">' + esc(p.name) + '</text>');
+    o.push('<text x="20" y="' + (y0 + 20) + '" font-family="sans-serif" font-size="12" fill="#5b6675">' +
+           'Floor area ' + st.area.toFixed(2) + ' m²  ·  Perimeter ' + st.perimeter.toFixed(2) + ' m  ·  Ceiling ' + p.height.toFixed(3) + ' m  ·  Net wall area ' +
+           st.wallArea.toFixed(2) + ' m²  ·  Volume ' + st.volume.toFixed(2) + ' m³</text>');
+    o.push('<text x="' + (W - 20) + '" y="' + y0 + '" font-family="sans-serif" font-size="11" fill="#8a94a6" text-anchor="end">' +
+           new Date().toISOString().slice(0, 10) + ' · measured with RoomScan</text>');
+
+    /* north arrow + scale bar */
+    o.push('<g transform="translate(' + (W - 60) + ',60)"><line x1="0" y1="18" x2="0" y2="-14" stroke="#12161d" stroke-width="2"/>' +
+           '<polygon points="0,-20 -5,-8 5,-8" fill="#12161d"/><text x="0" y="32" font-family="sans-serif" font-size="11" fill="#12161d" text-anchor="middle">N</text></g>');
+    var sb = s * 1;
+    o.push('<g transform="translate(' + pad + ',' + (Hh - 96) + ')"><line x1="0" y1="0" x2="' + sb.toFixed(1) + '" y2="0" stroke="#12161d" stroke-width="2"/>' +
+           '<line x1="0" y1="-5" x2="0" y2="5" stroke="#12161d" stroke-width="2"/><line x1="' + sb.toFixed(1) + '" y1="-5" x2="' + sb.toFixed(1) + '" y2="5" stroke="#12161d" stroke-width="2"/>' +
+           '<text x="' + (sb + 8).toFixed(1) + '" y="4" font-family="monospace" font-size="12" fill="#12161d">1 m</text></g>');
+    o.push('</svg>');
+    return o.join('\n');
+  };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function fmtPlain(m) {
+    var u = store.p.units;
+    if (u === 'mm') return Math.round(m * 1000) + '';
+    if (u === 'ft') { var t = m * 3.280839895, ft = Math.floor(t); return ft + "'" + ((t - ft) * 12).toFixed(1) + '"'; }
+    return m.toFixed(3);
+  }
+
+  /* ---------------- CSV schedule ---------------- */
+  X.csv = function () {
+    var p = store.p, st = store.stats(), walls = store.wallList();
+    var rows = [];
+    rows.push(['Room', p.name]);
+    rows.push(['Date', new Date().toISOString().slice(0, 10)]);
+    rows.push(['Ceiling height (m)', p.height.toFixed(3)]);
+    rows.push(['Floor area (m2)', st.area.toFixed(3)]);
+    rows.push(['Perimeter (m)', st.perimeter.toFixed(3)]);
+    rows.push(['Net wall area (m2)', st.wallArea.toFixed(3)]);
+    rows.push(['Opening area (m2)', st.openingArea.toFixed(3)]);
+    rows.push(['Volume (m3)', st.volume.toFixed(3)]);
+    rows.push([]);
+    rows.push(['Wall', 'Length (m)', 'Height (m)', 'Gross area (m2)', 'Openings (m2)', 'Net area (m2)', 'Bearing (deg)', 'Length locked']);
+    walls.forEach(function (w) {
+      var op = w.openings.reduce(function (s, o) { return s + o.w * (o.head - o.sill); }, 0);
+      rows.push(['W' + (w.i + 1), w.len.toFixed(3), p.height.toFixed(3), (w.len * p.height).toFixed(3),
+                 op.toFixed(3), w.area.toFixed(3), w.angle.toFixed(1), w.locked ? 'yes' : 'no']);
+    });
+    rows.push([]);
+    rows.push(['Wall', 'Opening', 'Type', 'Offset (m)', 'Width (m)', 'Sill (m)', 'Head (m)', 'Area (m2)']);
+    walls.forEach(function (w) {
+      w.openings.forEach(function (o, k) {
+        rows.push(['W' + (w.i + 1), k + 1, o.kind, o.off.toFixed(3), o.w.toFixed(3), o.sill.toFixed(3), o.head.toFixed(3),
+                   (o.w * (o.head - o.sill)).toFixed(3)]);
+      });
+    });
+    return rows.map(function (r) {
+      return r.map(function (c) {
+        var s = String(c == null ? '' : c);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(',');
+    }).join('\r\n');
+  };
+
+  X.json = function () { return JSON.stringify(store.p, null, 2); };
+
+  RM.X = X;
+})();
+</script>
+<script>
+/* js/app.js */
+/* app.js — UI wiring for RoomScan */
+(function () {
+  'use strict';
+  var M = RM.M, S = RM.S, store = RM.store, plan = RM.plan, photo = RM.photo, scan = RM.scan, R3 = RM.R3, X = RM.X;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var view = 'scan', viewer = null, need3d = true;
+
+  /* ---------------- chrome ---------------- */
+  var toastT;
+  function toast(msg, ms) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.classList.add('on');
+    clearTimeout(toastT);
+    toastT = setTimeout(function () { t.classList.remove('on'); }, ms || 2400);
+  }
+
+  function sheet(html, after) {
+    $('sheetInner').innerHTML = html;
+    $('sheet').classList.add('on');
+    if (after) after();
+  }
+  function closeSheet() { $('sheet').classList.remove('on'); }
+  $('sheet').addEventListener('click', function (e) { if (e.target === $('sheet')) closeSheet(); });
+  window.RMcloseSheet = closeSheet;
+
+  function setView(v) {
+    view = v;
+    ['scan', 'photo', 'plan', '3d', 'out'].forEach(function (k) {
+      $('v-' + k).classList.toggle('on', k === v);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('#tabs button'), function (b) {
+      b.classList.toggle('on', b.dataset.v === v);
+    });
+    if (v !== 'scan' && scan.running) { scan.stop(); $('btnCam').textContent = 'Start camera'; }
+    if (v === 'plan') { plan.draw(); if (!plan._fitted && store.p.points.length) { plan.fit(); plan._fitted = true; } }
+    if (v === 'photo') photo.draw();
+    if (v === '3d') open3d();
+    if (v === 'out') refreshOut();
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('#tabs button'), function (b) {
+    b.addEventListener('click', function () { setView(b.dataset.v); });
+  });
+
+  function refreshTop() {
+    var st = store.stats();
+    $('roomName').textContent = store.p.name;
+    $('areaChip').innerHTML = st.n < 3
+      ? '<b>' + st.n + '</b> pts'
+      : '<b>' + st.area.toFixed(2) + '</b> m² · <b>' + st.n + '</b> walls';
+    $('btnUndo').disabled = !store.canUndo();
+  }
+
+  $('btnUndo').addEventListener('click', function () {
+    if (store.undo()) { toast('Undone'); plan.draw(); } else toast('Nothing to undo');
+  });
+
+  $('roomName').addEventListener('click', function () {
+    sheet('<h2>Room name</h2><div class="field"><input id="nmIn" type="text" value="' + esc(store.p.name) + '"></div>' +
+      '<div class="row"><button class="grow" onclick="RMcloseSheet()">Cancel</button>' +
+      '<button class="grow primary" id="nmOk">Save</button></div>', function () {
+        $('nmOk').onclick = function () {
+          store.p.name = $('nmIn').value || 'Room 1';
+          store.emit('name'); closeSheet();
+        };
+      });
+  });
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  /* ================= SCAN ================= */
+  $('btnCam').addEventListener('click', function () {
+    if (scan.running) {
+      scan.stop(); $('btnCam').textContent = 'Start camera';
+      return;
+    }
+    S.request().then(function (r) {
+      if (!r.ok) toast('Tilt sensors unavailable — scan mode needs them. ' + r.reason, 5000);
+      return scan.start();
+    }).then(function () {
+      $('btnCam').textContent = 'Stop';
+      msgScan();
+      if (!store.p.calib.verified) {
+        toast('Calibrate first for real dimensions — tap Calibrate…', 4000);
+      }
+    }).catch(function (e) {
+      toast(e.message || String(e), 6000);
+      $('scanMsg').innerHTML = '<b>Camera unavailable.</b> ' + esc(e.message || '') +
+        '<br>Use the <b>Photo</b> tab — it needs no camera permission or sensors.';
+    });
+  });
+
+  function msgScan() {
+    $('scanMsg').innerHTML = store.p.calib.verified
+      ? 'Stand still. Aim the crosshair where the <b>wall meets the floor</b> at a corner, then <b>Mark corner</b>. Turn on the spot to reach every corner.'
+      : '<b>Not calibrated.</b> Dimensions will be rough guesses until you tap <b>Calibrate…</b>';
+  }
+
+  function hud() {
+    if (!scan.running) return;
+    var c = store.p.calib;
+    $('scanHud').innerHTML =
+      'pitch <b>' + S.pitchDown().toFixed(1) + '°</b> · roll <b>' + S.roll().toFixed(1) + '°</b> · ' +
+      'h <b>' + c.camH.toFixed(2) + ' m</b> · fov <b>' + (scan.fovDeg() ? scan.fovDeg().toFixed(0) : '?') + '°</b>' +
+      (c.verified ? ' <span class="badge ok">cal</span>' : ' <span class="badge warn">uncal</span>') +
+      (scan.stationIdx ? ' · spot ' + (scan.stationIdx + 1) : '');
+  }
+  setInterval(function () { if (scan.running && view === 'scan') hud(); }, 250);
+
+  $('btnMark').addEventListener('click', function () {
+    if (!scan.running) return toast('Start the camera first');
+    var r = scan.markCorner();
+    toast(r.msg, r.ok ? 1800 : 4000);
+    if (r.ok && store.p.points.length >= 2) {
+      var d = scan.lastSpan();
+      if (d) $('scanMsg').innerHTML = 'Last wall measured <b>' + d.toFixed(3) + ' m</b>. Check it against a tape once — if it is off by a fixed %, redo <b>Calibrate…</b>';
+    }
+  });
+
+  $('btnCeil').addEventListener('click', function () {
+    if (!scan.running) return toast('Start the camera first');
+    var r = scan.measureHeightAtLast();
+    toast(r.msg, r.ok ? 2200 : 4200);
+  });
+
+  $('btnUndoPt').addEventListener('click', function () {
+    if (!store.p.points.length) return toast('No points');
+    store.removePoint(store.p.points.length - 1);
+    toast('Removed last corner');
+  });
+
+  $('btnGrab').addEventListener('click', function () {
+    if (!scan.running) return toast('Start the camera first');
+    var d = scan.grabFrame();
+    if (!d) return toast('No frame');
+    photo.setImage(d).then(function () {
+      photo.setMode('wall');
+      setView('photo');
+      $('photoMsg').innerHTML = 'Tap the four corners of this wall in order <b>bottom-left, bottom-right, top-right, top-left</b>, then use <b>3 · Wall photo</b> to apply it as a texture.';
+      toast('Frame sent to Photo tab');
+    });
+  });
+
+  /* ---- calibration sheet ---- */
+  $('btnCalib').addEventListener('click', function () {
+    var c = store.p.calib;
+    sheet(
+      '<h2>Calibrate the camera</h2>' +
+      '<p class="hint" style="margin-top:0">Two unknowns decide every scan measurement: how high the phone is, and the camera\'s focal length. Measure once, reuse for every room on this phone.</p>' +
+      '<div class="card"><h3>A · I know my phone height</h3>' +
+      '<div class="grid2">' +
+      '<div class="field"><label>Phone height above floor (m)</label><input id="cH" type="number" step="0.005" value="' + c.camH + '"></div>' +
+      '<div class="field"><label>Tape distance to the mark (m)</label><input id="cD" type="number" step="0.01" value="2.00"></div>' +
+      '</div>' +
+      '<p class="hint">Put a mark on the floor a measured distance in front of your toes. Stand still, aim the crosshair exactly at it, then tap Solve.</p>' +
+      '<button class="primary" id="cSolve1" style="width:100%">Solve focal length</button></div>' +
+      '<div class="card"><h3>B · Two marks, no phone height needed</h3>' +
+      '<p class="hint" style="margin-top:0">Mark two spots on the floor at measured distances (e.g. 1.00 m and 3.00 m). Aim at each in turn and capture. Solves height <i>and</i> focal length.</p>' +
+      '<div class="row"><input id="cD2" type="number" step="0.01" value="1.00" style="flex:1">' +
+      '<button id="cAdd" style="flex:1">Capture sighting</button></div>' +
+      '<div class="hint" id="cCount">' + scan.calibSamples.length + ' sighting(s) captured</div>' +
+      '<button class="primary" id="cSolve2" style="width:100%;margin-top:8px">Solve both</button></div>' +
+      '<div class="card"><h3>Current</h3><div class="hint mono">fRel ' + c.fRel.toFixed(4) +
+      ' · FOV ' + (c.fovDeg || (scan.fovDeg() || 0).toFixed(1)) + '° · height ' + c.camH.toFixed(3) + ' m · ' +
+      (c.verified ? '<span class="badge ok">calibrated</span>' : '<span class="badge warn">defaults</span>') + '</div></div>' +
+      '<button style="width:100%" onclick="RMcloseSheet()">Close</button>',
+      function () {
+        $('cSolve1').onclick = function () {
+          if (!scan.running) return toast('Start the camera first');
+          store.p.calib.camH = parseFloat($('cH').value) || store.p.calib.camH;
+          var r = scan.calibFocalFromDistance(parseFloat($('cD').value));
+          toast(r.msg, 4000);
+          if (r.ok) { closeSheet(); msgScan(); }
+        };
+        $('cAdd').onclick = function () {
+          if (!scan.running) return toast('Start the camera first');
+          var n = scan.addCalibSample(parseFloat($('cD2').value));
+          $('cCount').textContent = n + ' sighting(s) captured';
+          toast('Sighting ' + n + ' captured');
+        };
+        $('cSolve2').onclick = function () {
+          var r = scan.solveTwoPoint();
+          toast(r.msg, 4500);
+          if (r.ok) { closeSheet(); msgScan(); }
+        };
+      });
+  });
+
+  /* ---- move to a new standing spot ---- */
+  $('btnStation').addEventListener('click', function () {
+    if (store.p.points.length < 2) return toast('Mark at least two corners from this spot first');
+    var opts = store.p.points.map(function (p, i) { return '<option value="' + i + '">Corner ' + (i + 1) + '</option>'; }).join('');
+    sheet(
+      '<h2>Move to a new spot</h2>' +
+      '<p class="hint" style="margin-top:0">Walk to the new position, then re-sight two corners you already measured. The app works out where you are standing now and keeps everything in one plan.</p>' +
+      '<div class="grid2"><div class="field"><label>Reference 1</label><select id="rA">' + opts + '</select></div>' +
+      '<div class="field"><label>Reference 2</label><select id="rB">' + opts + '</select></div></div>' +
+      '<button class="primary" id="rGo" style="width:100%">Start re-sighting</button>' +
+      '<button style="width:100%;margin-top:8px" onclick="RMcloseSheet()">Cancel</button>',
+      function () {
+        $('rB').selectedIndex = Math.min(1, store.p.points.length - 1);
+        $('rGo').onclick = function () {
+          var a = +$('rA').value, b = +$('rB').value;
+          if (a === b) return toast('Pick two different corners');
+          scan.beginStation(a, b);
+          closeSheet();
+          $('scanMsg').innerHTML = 'Aim at <b>corner ' + (a + 1) + '</b> and tap <b>Mark corner</b>, then at <b>corner ' + (b + 1) + '</b>.';
+          toast('Re-sight corner ' + (a + 1) + ' first');
+        };
+      });
+  });
+
+  /* ================= PHOTO ================= */
+  $('btnPhotoTake').addEventListener('click', function () { $('photoFile').click(); });
+  $('photoFile').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      photo.setImage(rd.result).then(function () {
+        photo.setMode('ref');
+        setPhotoMode('ref');
+        toast('Tap the 4 corners of the reference: near-left, near-right, far-right, far-left');
+      }).catch(function (er) { toast(er.message); });
+    };
+    rd.readAsDataURL(f);
+    e.target.value = '';
+  });
+
+  $('refPreset').addEventListener('change', function () {
+    var v = this.value;
+    if (v === 'custom') {
+      sheet('<h2>Custom reference</h2><p class="hint" style="margin-top:0">Measure the object on the floor. <b>Near edge</b> is A→B, <b>depth</b> is B→C.</p>' +
+        '<div class="grid2"><div class="field"><label>Near edge A→B (m)</label><input id="rw" type="number" step="0.001" value="' + photo.refW + '"></div>' +
+        '<div class="field"><label>Depth B→C (m)</label><input id="rh" type="number" step="0.001" value="' + photo.refH + '"></div></div>' +
+        '<button class="primary" id="rOk" style="width:100%">Apply</button>', function () {
+          $('rOk').onclick = function () {
+            photo.refW = parseFloat($('rw').value) || photo.refW;
+            photo.refH = parseFloat($('rh').value) || photo.refH;
+            photo.solve(); photo.draw(); closeSheet();
+            toast('Reference set to ' + photo.refW + ' × ' + photo.refH + ' m');
+          };
+        });
+      return;
+    }
+    var a = v.split(',');
+    photo.refW = parseFloat(a[0]); photo.refH = parseFloat(a[1]);
+    photo.solve(); photo.draw();
+    toast('Reference ' + photo.refW + ' × ' + photo.refH + ' m');
+  });
+
+  function setPhotoMode(m) {
+    photo.setMode(m);
+    $('mRef').className = m === 'ref' ? 'blue' : '';
+    $('mCorners').className = m === 'corners' ? 'blue' : '';
+    $('mWall').className = m === 'wall' ? 'blue' : '';
+    var msg = {
+      ref: 'Step 2 — tap the reference object\'s corners in order: <b>A</b> near-left, <b>B</b> near-right, <b>C</b> far-right, <b>D</b> far-left. Drag to fine-tune with the loupe. A green 1 m grid appears when it solves.',
+      corners: 'Step 3 — tap each <b>floor corner</b> of the room, going round in order. Live wall lengths appear as you go. Then <b>Use corners as room</b>.',
+      wall: 'Wall photo — tap the wall\'s four corners: <b>BL, BR, TR, TL</b>. Then pick which wall it belongs to and it becomes a texture on the 3D model.'
+    }[m];
+    $('photoMsg').innerHTML = msg;
+    if (m === 'wall') applyWallUI();
+  }
+  $('mRef').addEventListener('click', function () { setPhotoMode('ref'); });
+  $('mCorners').addEventListener('click', function () {
+    if (!photo.H) return toast('Set the reference rectangle first (step 1)');
+    setPhotoMode('corners');
+  });
+  $('mWall').addEventListener('click', function () { setPhotoMode('wall'); });
+  $('btnPhotoUndo').addEventListener('click', function () { photo.undoPoint(); });
+
+  photo.onchange = function () {
+    if (photo.mode === 'ref' && photo.H) {
+      var p = photo.precisionAt({ x: photo.img ? photo.img.width / 2 : 0, y: photo.img ? photo.img.height * 0.75 : 0 });
+      $('photoMsg').innerHTML = 'Reference solved — the green grid is 1 m squares. If it does not lie flat on the floor, drag the corners until it does.' +
+        (p ? ' Precision near the middle of the frame: <b>~' + p.toFixed(0) + ' mm per pixel</b>.' : '') +
+        '<br>Now tap <b>2 · Corners</b>.';
+    }
+  };
+
+  $('btnUseRoom').addEventListener('click', function () {
+    var w = photo.worldCorners();
+    if (w.length < 3) return toast('Tap at least 3 room corners in step 2');
+    store.setPoints(w, 'photo');
+    plan._fitted = false;
+    setView('plan'); plan.fit();
+    toast(w.length + ' corners → plan');
+  });
+
+  $('btnAppendRoom').addEventListener('click', function () {
+    var w = photo.worldCorners();
+    if (!w.length) return toast('No corners tapped');
+    store.setPoints(store.p.points.concat(w), 'photo');
+    setView('plan'); plan.fit();
+    toast('Appended ' + w.length + ' corners');
+  });
+
+  function applyWallUI() {
+    if (photo.wallQuad.length !== 4) return;
+    var walls = store.wallList();
+    if (!walls.length) return toast('Draw the room plan first, then attach wall photos');
+    var opts = walls.map(function (w) {
+      return '<option value="' + w.i + '">Wall ' + (w.i + 1) + ' — ' + w.len.toFixed(2) + ' m</option>';
+    }).join('');
+    sheet('<h2>Apply wall photo</h2><div class="field"><label>Which wall?</label><select id="wSel">' + opts + '</select></div>' +
+      '<button class="primary" id="wOk" style="width:100%">Rectify &amp; apply</button>' +
+      '<button style="width:100%;margin-top:8px" onclick="RMcloseSheet()">Cancel</button>', function () {
+        $('wOk').onclick = function () {
+          var i = +$('wSel').value, w = store.wallList()[i];
+          toast('Rectifying…');
+          setTimeout(function () {
+            var d = photo.rectifyWall(w.len, store.p.height, 1024);
+            if (!d) { toast('Could not rectify — re-tap the wall corners'); return; }
+            store.setWallTex(i, d);
+            closeSheet();
+            need3d = true;
+            toast('Wall ' + (i + 1) + ' textured');
+          }, 30);
+        };
+      });
+  }
+
+  /* ================= PLAN ================= */
+  plan.onselect = function (sel) {
+    var box = $('selInfo');
+    if (!sel) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    if (sel.type === 'edge') {
+      var w = store.wallList()[sel.i];
+      if (!w) { box.style.display = 'none'; return; }
+      box.innerHTML = '<b>Wall ' + (sel.i + 1) + '</b> · ' + w.angle.toFixed(1) + '°' +
+        '<div class="row"><input id="edLen" type="number" step="0.001" value="' + w.len.toFixed(3) + '">' +
+        '<button id="edSet" class="blue">Set</button><button id="edLock">' + (w.locked ? '🔒' : '🔓') + '</button></div>' +
+        '<div class="row"><button id="edIns">+ point</button><button id="edOpen">+ opening</button></div>';
+      $('edSet').onclick = function () {
+        store.setEdgeLength(sel.i, parseFloat($('edLen').value));
+        toast('Wall ' + (sel.i + 1) + ' set to ' + $('edLen').value + ' m and locked');
+      };
+      $('edLock').onclick = function () { store.toggleLock(sel.i); plan.onselect(sel); };
+      $('edIns').onclick = function () {
+        var a = store.p.points[sel.i], b = store.p.points[(sel.i + 1) % store.p.points.length];
+        store.insertPointAfter(sel.i, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+        toast('Point inserted');
+      };
+      $('edOpen').onclick = function () { openingSheet(sel.i); };
+    } else {
+      box.innerHTML = '<b>Corner ' + (sel.i + 1) + '</b> · ' + M.vertexAngle(store.p.points, sel.i).toFixed(1) + '°' +
+        '<div class="row"><button id="vDel" class="danger">Delete</button></div>';
+      $('vDel').onclick = function () { store.removePoint(sel.i); plan.sel = null; plan.onselect(null); };
+    }
+  };
+
+  $('pFit').addEventListener('click', function () { plan.fit(); });
+  $('pOrtho').addEventListener('click', function () {
+    plan.snapOrtho = !plan.snapOrtho;
+    $('pOrtho').style.color = plan.snapOrtho ? '#39d0a8' : '';
+    toast('Ortho snap ' + (plan.snapOrtho ? 'on' : 'off'));
+  });
+  $('pDel').addEventListener('click', function () {
+    if (plan.sel && plan.sel.type === 'vertex') { store.removePoint(plan.sel.i); plan.sel = null; plan.onselect(null); }
+    else toast('Select a corner first');
+  });
+
+  $('btnRect').addEventListener('click', function () {
+    sheet('<h2>Rectangular room</h2><p class="hint" style="margin-top:0">Fastest accurate route: tape-measure the room and type it in.</p>' +
+      '<div class="grid2"><div class="field"><label>Width (m)</label><input id="rW" type="number" step="0.005" value="4.000"></div>' +
+      '<div class="field"><label>Depth (m)</label><input id="rD" type="number" step="0.005" value="3.000"></div></div>' +
+      '<div class="field"><label>Ceiling height (m)</label><input id="rH" type="number" step="0.005" value="' + store.p.height + '"></div>' +
+      '<button class="primary" id="rMk" style="width:100%">Create</button>', function () {
+        $('rMk').onclick = function () {
+          var w = parseFloat($('rW').value), d = parseFloat($('rD').value), h = parseFloat($('rH').value);
+          if (!(w > 0 && d > 0)) return toast('Enter width and depth');
+          store.setPoints(M.rect(w, d), 'rect');
+          store.p.locks = { 0: w, 1: d, 2: w, 3: d };
+          if (h > 0) store.p.height = h;
+          store.emit('rect');
+          closeSheet(); plan.fit();
+          toast('Rectangle created');
+        };
+      });
+  });
+
+  $('btnReg').addEventListener('click', function () {
+    if (store.p.points.length < 3) return toast('Need at least 3 corners');
+    var before = store.p.points.map(function (p) { return { x: p.x, y: p.y }; });
+    var out = M.regularize(before, { snapDeg: 90, tolDeg: 14, iters: 700, locks: store.p.locks });
+    var moved = 0;
+    out.forEach(function (p, i) { moved = Math.max(moved, M.dist(p, before[i])); });
+    store.setPoints(out, 'regularize');
+    plan.draw();
+    toast('Squared up — largest correction ' + (moved * 1000).toFixed(0) + ' mm');
+  });
+
+  $('btnClearPts').addEventListener('click', function () {
+    if (!store.p.points.length) return;
+    sheet('<h2>Clear all corners?</h2><p class="hint">The plan, walls and openings for this room are removed. Calibration and the room name stay.</p>' +
+      '<div class="row"><button class="grow" onclick="RMcloseSheet()">Cancel</button>' +
+      '<button class="grow danger" id="clOk">Clear</button></div>', function () {
+        $('clOk').onclick = function () { store.clearPoints(); closeSheet(); toast('Cleared'); };
+      });
+  });
+
+  $('btnOpening').addEventListener('click', function () {
+    if (plan.sel && plan.sel.type === 'edge') openingSheet(plan.sel.i);
+    else toast('Tap a wall on the plan first');
+  });
+
+  function openingSheet(wallIdx) {
+    var w = store.wallList()[wallIdx];
+    if (!w) return;
+    var list = w.openings.map(function (o, k) {
+      return '<tr><td>' + o.kind + '</td><td class="num">' + o.off.toFixed(2) + '</td><td class="num">' + o.w.toFixed(2) +
+        '</td><td class="num">' + o.sill.toFixed(2) + '–' + o.head.toFixed(2) + '</td>' +
+        '<td><button data-k="' + k + '" class="opDel danger" style="padding:3px 8px">✕</button></td></tr>';
+    }).join('');
+    sheet('<h2>Wall ' + (wallIdx + 1) + ' openings</h2>' +
+      '<p class="hint" style="margin-top:0">Wall is ' + w.len.toFixed(3) + ' m long. Offset is measured from corner ' + (wallIdx + 1) + '.</p>' +
+      '<div class="grid2"><div class="field"><label>Type</label><select id="oKind"><option value="door">Door</option><option value="window">Window</option></select></div>' +
+      '<div class="field"><label>Offset from corner (m)</label><input id="oOff" type="number" step="0.01" value="0.50"></div>' +
+      '<div class="field"><label>Width (m)</label><input id="oW" type="number" step="0.01" value="0.90"></div>' +
+      '<div class="field"><label>Sill height (m)</label><input id="oS" type="number" step="0.01" value="0"></div>' +
+      '<div class="field"><label>Head height (m)</label><input id="oH" type="number" step="0.01" value="2.10"></div></div>' +
+      '<button class="primary" id="oAdd" style="width:100%">Add</button>' +
+      (list ? '<div class="sep"></div><table class="tbl"><tr><th>Type</th><th class="num">Off</th><th class="num">W</th><th class="num">Sill–head</th><th></th></tr>' + list + '</table>' : '') +
+      '<button style="width:100%;margin-top:10px" onclick="RMcloseSheet()">Close</button>', function () {
+        $('oKind').onchange = function () {
+          var d = this.value === 'door';
+          $('oW').value = d ? 0.90 : 1.20;
+          $('oS').value = d ? 0 : 0.90;
+          $('oH').value = d ? 2.10 : 2.10;
+        };
+        $('oAdd').onclick = function () {
+          var o = {
+            kind: $('oKind').value,
+            off: parseFloat($('oOff').value) || 0,
+            w: parseFloat($('oW').value) || 0.9,
+            sill: parseFloat($('oS').value) || 0,
+            head: parseFloat($('oH').value) || 2.1
+          };
+          if (o.head <= o.sill) return toast('Head must be above sill');
+          if (o.off + o.w > w.len + 0.001) return toast('Opening runs past the end of the wall');
+          store.addOpening(wallIdx, o);
+          need3d = true;
+          closeSheet(); openingSheet(wallIdx);
+          toast('Added ' + o.kind);
+        };
+        Array.prototype.forEach.call(document.querySelectorAll('.opDel'), function (b) {
+          b.onclick = function () {
+            store.removeOpening(wallIdx, +b.dataset.k);
+            need3d = true;
+            closeSheet(); openingSheet(wallIdx);
+          };
+        });
+      });
+  }
+
+  /* ================= 3D ================= */
+  function open3d() {
+    if (!viewer) {
+      try { viewer = new R3.Viewer($('gl')); }
+      catch (e) {
+        $('glHud').innerHTML = '<span class="badge bad">no WebGL</span> ' + esc(e.message);
+        return;
+      }
+      viewer.show.ceiling = $('tCeil').checked;
+      viewer.show.tex = $('tTex').checked;
+      viewer.show.edges = $('tEdge').checked;
+      viewer.show.grid = $('tGrid').checked;
+    }
+    if (need3d) rebuild3d();
+    viewer.dirty = true;
+  }
+
+  function rebuild3d() {
+    if (!viewer) return;
+    var meshes = R3.buildMeshes(store.p, {});
+    viewer.upload(meshes);
+    if (!viewer._posed && store.p.points.length >= 3) { viewer.fit(store.p); viewer._posed = true; }
+    var st = store.stats();
+    $('glHud').innerHTML = st.n < 3
+      ? 'Add at least 3 corners'
+      : st.area.toFixed(2) + ' m² · ' + st.n + ' walls · h ' + store.p.height.toFixed(2) + ' m · ' + meshes.length + ' objects';
+    need3d = false;
+  }
+
+  [['tCeil', 'ceiling'], ['tTex', 'tex'], ['tEdge', 'edges'], ['tGrid', 'grid']].forEach(function (t) {
+    $(t[0]).addEventListener('change', function () {
+      if (!viewer) return;
+      viewer.show[t[1]] = this.checked;
+      viewer.dirty = true;
+    });
+  });
+  $('g3Fit').addEventListener('click', function () { if (viewer) viewer.fit(store.p); });
+  $('g3Top').addEventListener('click', function () { if (viewer) viewer.top(store.p); });
+  $('g3In').addEventListener('click', function () { if (viewer) viewer.inside(store.p); });
+  $('g3Shot').addEventListener('click', function () {
+    if (!viewer) return;
+    var url = viewer.snapshot();
+    fetch(url).then(function (r) { return r.blob(); }).then(function (b) {
+      X.share(b, X.safeName() + '-3d.png', store.p.name);
+    });
+  });
+
+  /* ================= EXPORT ================= */
+  function refreshOut() {
+    var p = store.p, st = store.stats();
+    $('fName').value = p.name;
+    $('fHeight').value = p.height;
+    $('fUnits').value = p.units;
+    $('fCamH').value = p.calib.camH;
+    $('fNotes').value = p.notes || '';
+    $('statBox').innerHTML =
+      stat('Floor area', st.area.toFixed(2), 'm²') +
+      stat('Perimeter', st.perimeter.toFixed(2), 'm') +
+      stat('Net wall area', st.wallArea.toFixed(2), 'm²') +
+      stat('Volume', st.volume.toFixed(2), 'm³');
+    var walls = store.wallList();
+    $('wallTbl').innerHTML = walls.length
+      ? '<tr><th>Wall</th><th class="num">Length</th><th class="num">Net area</th><th class="num">Bearing</th><th>Openings</th></tr>' +
+        walls.map(function (w) {
+          return '<tr><td>W' + (w.i + 1) + (w.locked ? ' 🔒' : '') + '</td><td class="num">' + w.len.toFixed(3) + ' m</td>' +
+            '<td class="num">' + w.area.toFixed(2) + ' m²</td><td class="num">' + w.angle.toFixed(1) + '°</td>' +
+            '<td>' + (w.openings.length || '—') + (w.tex ? ' 📷' : '') + '</td></tr>';
+        }).join('')
+      : '<tr><td class="hint">No walls yet</td></tr>';
+    renderSlots();
+  }
+  function stat(k, v, u) {
+    return '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + ' <small>' + u + '</small></div></div>';
+  }
+
+  $('fName').addEventListener('change', function () { store.p.name = this.value || 'Room 1'; store.emit('name'); });
+  $('fHeight').addEventListener('change', function () { store.setHeight(parseFloat(this.value)); need3d = true; });
+  $('fUnits').addEventListener('change', function () { store.p.units = this.value; store.emit('units'); plan.draw(); });
+  $('fCamH').addEventListener('change', function () {
+    var v = parseFloat(this.value);
+    if (v > 0.2 && v < 2.6) { store.p.calib.camH = v; store.emit('calib'); }
+  });
+  $('fNotes').addEventListener('change', function () { store.p.notes = this.value; store.emit('notes'); });
+
+  function guard(fn) {
+    try { fn(); } catch (e) { toast(e.message || String(e), 4500); }
+  }
+  $('xGLB').addEventListener('click', function () {
+    guard(function () { X.share(X.glb(), X.safeName() + '.glb', store.p.name); });
+  });
+  $('xOBJ').addEventListener('click', function () {
+    guard(function () { X.share(X.zip(X.objFiles()), X.safeName() + '-obj.zip', store.p.name); });
+  });
+  $('xSVG').addEventListener('click', function () {
+    guard(function () { X.share(new Blob([X.svg()], { type: 'image/svg+xml' }), X.safeName() + '-plan.svg', store.p.name); });
+  });
+  $('xCSV').addEventListener('click', function () {
+    guard(function () { X.share(new Blob([X.csv()], { type: 'text/csv' }), X.safeName() + '-schedule.csv', store.p.name); });
+  });
+  $('xJSON').addEventListener('click', function () {
+    guard(function () { X.share(new Blob([X.json()], { type: 'application/json' }), X.safeName() + '.json', store.p.name); });
+  });
+  $('xLoad').addEventListener('click', function () { $('jsonFile').click(); });
+  $('jsonFile').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      try {
+        store.importJSON(rd.result);
+        need3d = true; plan.fit(); refreshOut();
+        toast('Loaded ' + store.p.name);
+      } catch (er) { toast(er.message, 4000); }
+    };
+    rd.readAsText(f);
+    e.target.value = '';
+  });
+
+  $('slotSave').addEventListener('click', function () {
+    var n = $('slotName').value || store.p.name;
+    store.saveSlot(n);
+    $('slotName').value = '';
+    renderSlots();
+    toast('Saved “' + n + '”');
+  });
+
+  function renderSlots() {
+    var list = store.slots();
+    $('slotList').innerHTML = list.length
+      ? list.map(function (s) {
+          var a = s.points && s.points.length >= 3 ? M.area(s.points).toFixed(1) + ' m²' : (s.points || []).length + ' pts';
+          return '<div class="row" style="margin-bottom:6px"><div class="grow">' + esc(s.name) + ' <span class="badge">' + a + '</span></div>' +
+            '<button data-n="' + esc(s.name) + '" class="slotOpen blue" style="padding:6px 10px">Open</button>' +
+            '<button data-n="' + esc(s.name) + '" class="slotDel danger" style="padding:6px 10px">✕</button></div>';
+        }).join('')
+      : '<div class="hint">Nothing saved yet</div>';
+    Array.prototype.forEach.call(document.querySelectorAll('.slotOpen'), function (b) {
+      b.onclick = function () {
+        store.loadSlot(b.dataset.n);
+        need3d = true; plan._fitted = false; plan.fit(); refreshOut();
+        toast('Opened ' + b.dataset.n);
+      };
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.slotDel'), function (b) {
+      b.onclick = function () { store.deleteSlot(b.dataset.n); renderSlots(); };
+    });
+  }
+
+  /* ================= boot ================= */
+  store.on(function (p, what) {
+    refreshTop();
+    need3d = true;
+    if (view === '3d') rebuild3d();
+    if (view === 'out' && what !== 'points') refreshOut();
+    if (view === 'out' && what === 'points') refreshOut();
+  });
+
+  window.addEventListener('resize', function () {
+    plan.draw();
+    photo.draw();
+    if (viewer) viewer.dirty = true;
+  });
+
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+
+  plan.init($('planCv'));
+  photo.init($('photoCv'));
+  scan.init($('vid'), $('scanOv'));
+  store.loadLocal();
+  store.syncWalls();
+  refreshTop();
+  setView(store.p.points.length >= 3 ? 'plan' : 'scan');
+  if (store.p.points.length) plan.fit();
+  $('pOrtho').style.color = '#39d0a8';
+
+  if (!S.secure) {
+    $('scanMsg').innerHTML = '<b>This page is not on https://</b> — phone cameras and motion sensors are blocked here. ' +
+      'The <b>Photo</b> tab still works fully (it uses the normal camera app). See README to serve over https.';
+  }
+})();
+</script>
+</body>
+</html>
