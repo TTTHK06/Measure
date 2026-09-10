@@ -239,6 +239,18 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
 .roomrow button{padding:6px 9px;font-size:12px}
 .roomrow .here{font:600 9.5px/1 ui-monospace,monospace;letter-spacing:.07em;text-transform:uppercase;
   background:var(--acc);color:#04211a;border-radius:99px;padding:3px 6px}
+
+/* persistent warning when the survey can no longer be saved */
+#saveWarn{
+  position:fixed;left:8px;right:8px;bottom:calc(var(--tab) + var(--sab) + 8px);z-index:70;
+  background:#3a1f24;border:1px solid #7a3a44;color:#ffd9d9;border-radius:12px;padding:10px 12px;font-size:13px
+}
+#saveWarn b{color:#fff}
+#saveWarn button{margin-top:8px;width:100%;background:#5c2b32;border-color:#7a3a44;color:#ffd9d9}
+.meter{height:6px;border-radius:99px;background:var(--bg3);overflow:hidden;margin:8px 0 6px}
+.meter i{display:block;height:100%;background:var(--acc)}
+.meter i.warn{background:var(--warn)}
+.meter i.bad{background:var(--bad)}
 </style>
 </head>
 <body>
@@ -405,6 +417,11 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
       </div>
 
       <div class="card">
+        <h3>Storage</h3>
+        <div id="storeBox"></div>
+      </div>
+
+      <div class="card">
         <h3>Offline &amp; install</h3>
         <div id="offlineBox"></div>
       </div>
@@ -447,6 +464,7 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
   <div class="inner" id="sheetInner"></div>
 </div>
 
+<div id="saveWarn" hidden></div>
 <div id="toast"></div>
 
 <input type="file" id="photoFile" accept="image/*" capture="environment" hidden>
@@ -1387,7 +1405,13 @@ window.RM = window.RM || {};
   };
 
   store.autosave = function () {
-    if (store.p.points && store.p.points.length) store.saveSlot(store.p.name);
+    if (!store.p.points || !store.p.points.length) return true;
+    var ok = store.saveSlot(store.p.name);
+    if (!ok) {
+      store.saveError = { when: Date.now(), room: store.p.name, msg: 'Device storage for this app is full' };
+      store.onSaveState && store.onSaveState(store.saveError);
+    }
+    return ok;
   };
 
   /* Start a blank room. Building-wide settings carry over, because the next room
@@ -1539,11 +1563,60 @@ window.RM = window.RM || {};
   };
 
   /* --- persistence --- */
+  /* Wall photos are big, and localStorage is only a few MB. A failure here used to
+     vanish, so a long survey could silently stop saving. Now it is recorded and
+     surfaced, and the calibration is written separately so it survives regardless. */
+  store.saveError = null;
+
   store.saveLocal = function () {
+    try { localStorage.setItem(CAL, JSON.stringify(store.p.calib)); } catch (e) {}
     try {
       localStorage.setItem(KEY, JSON.stringify(store.p));
-      localStorage.setItem(CAL, JSON.stringify(store.p.calib));
+      if (store.saveError) { store.saveError = null; store.onSaveState && store.onSaveState(null); }
+      return true;
+    } catch (e) {
+      store.saveError = {
+        when: Date.now(),
+        room: store.p.name,
+        msg: (e && e.name === 'QuotaExceededError') ? 'Device storage for this app is full' : String(e && e.message || e)
+      };
+      store.onSaveState && store.onSaveState(store.saveError);
+      return false;
+    }
+  };
+
+  /* bytes currently used by this app, and by wall photos specifically */
+  store.usage = function () {
+    var total = 0, tex = 0, rooms = 0;
+    try {
+      var cur = localStorage.getItem(KEY) || '';
+      var sl = localStorage.getItem(SLOTS) || '';
+      total = cur.length + sl.length;
+      var all = store.slots().concat([store.p]);
+      all.forEach(function (r) {
+        rooms++;
+        (r.walls || []).forEach(function (w) { if (w.tex) tex += w.tex.length; });
+      });
     } catch (e) {}
+    return { bytes: total, texBytes: tex, rooms: rooms };
+  };
+
+  /* strip the photos from a room to reclaim space; geometry and dimensions stay */
+  store.dropPhotos = function (name) {
+    var freed = 0;
+    if (!name || name === store.p.name) {
+      (store.p.walls || []).forEach(function (w) { if (w.tex) { freed += w.tex.length; w.tex = null; w.texMeta = null; } });
+      store.emit('tex');
+    } else {
+      var list = store.slots(), hit = false;
+      list.forEach(function (r) {
+        if (r.name !== name) return;
+        hit = true;
+        (r.walls || []).forEach(function (w) { if (w.tex) { freed += w.tex.length; w.tex = null; w.texMeta = null; } });
+      });
+      if (hit) { try { localStorage.setItem(SLOTS, JSON.stringify(list)); } catch (e) {} }
+    }
+    return freed;
   };
 
   /* a loaded project must not drag another phone's calibration along with it */
@@ -2433,7 +2506,9 @@ window.RM = window.RM || {};
   /* rectify the tapped wall quad into a texture of the given real-world aspect */
   photo.rectifyWall = function (lenM, hM, px) {
     if (photo.wallQuad.length !== 4 || !photo.img) return null;
-    px = px || 1024;
+    /* 768 px is plenty for a wall texture and roughly a third of the bytes of 1024;
+       these live in localStorage alongside the survey, which is only a few MB. */
+    px = px || 768;
     var aspect = Math.max(0.05, lenM / Math.max(0.05, hM));
     var w = Math.round(px), h = Math.round(px / aspect);
     var dst = [{ x: 0, y: h }, { x: w, y: h }, { x: w, y: 0 }, { x: 0, y: 0 }];  // BL,BR,TR,TL
@@ -2462,7 +2537,7 @@ window.RM = window.RM || {};
       }
     }
     out.getContext('2d').putImageData(od, 0, 0);
-    return out.toDataURL('image/jpeg', 0.82);
+    return out.toDataURL('image/jpeg', 0.72);
   };
 
   /* ---------- drawing ---------- */
@@ -4670,7 +4745,7 @@ window.RM = window.RM || {};
           var i = +$('wSel').value, w = store.wallList()[i];
           toast('Rectifying…');
           setTimeout(function () {
-            var d = photo.rectifyWall(w.len, store.p.height, 1024);
+            var d = photo.rectifyWall(w.len, store.p.height, 768);
             if (!d) { toast('Could not rectify — re-tap the wall corners'); return; }
             store.setWallTex(i, d, { len: w.len, h: store.p.height });
             closeSheet();
@@ -4919,6 +4994,31 @@ window.RM = window.RM || {};
         }).join('')
       : '<tr><td class="hint">No walls yet</td></tr>';
     renderSlots();
+    var u = store.usage();
+    var LIMIT = 5 * 1024 * 1024;                 // the usual per-origin allowance
+    var pct = Math.min(100, u.bytes / LIMIT * 100);
+    var cls = pct > 85 ? 'bad' : pct > 60 ? 'warn' : '';
+    var sb = $('storeBox');
+    if (sb) {
+      sb.innerHTML =
+        '<div class="meter"><i class="' + cls + '" style="width:' + pct.toFixed(1) + '%"></i></div>' +
+        '<div class="hint" style="margin:0">' + (u.bytes / 1024).toFixed(0) + ' KB of about ' +
+        (LIMIT / 1024 / 1024).toFixed(0) + ' MB used \u00b7 ' + u.rooms + ' room(s)' +
+        (u.texBytes ? ' \u00b7 wall photos are ' + (u.texBytes / 1024).toFixed(0) + ' KB of it' : '') + '</div>' +
+        (u.texBytes > 200 * 1024
+          ? '<p class="hint">Wall photos are by far the biggest thing stored. Export the JSON to keep a room permanently, then drop its photos to make room.</p>' +
+            '<button id="btnDropPhotos" class="danger" style="width:100%">Drop photos from this room</button>'
+          : '<p class="hint">Rooms are kept in this browser only. Export the JSON for anything you must not lose \u2014 clearing site data wipes all of it.</p>');
+      if ($('btnDropPhotos')) {
+        $('btnDropPhotos').onclick = function () {
+          var freed = store.dropPhotos(null);
+          need3d = true;
+          refreshOut();
+          toast(freed ? 'Freed ' + (freed / 1024).toFixed(0) + ' KB \u2014 dimensions kept' : 'No photos on this room');
+        };
+      }
+    }
+
     var off = window.RMoffline || { state: 'unsupported', detail: '' };
     var cls = { ready: 'ok', pending: 'warn', error: 'bad', disabled: 'warn', unsupported: '' }[off.state] || '';
     var label = {
@@ -5011,6 +5111,23 @@ window.RM = window.RM || {};
     $('slotList').innerHTML = roomRows();
     wireRoomRows(function () { refreshOut(); });
   }
+
+  /* A failed save is not a toast that scrolls away: the survey is no longer being
+     kept, so it stays on screen until the user acts on it. */
+  function showSaveWarning(err) {
+    var el = $('saveWarn');
+    if (!el) return;
+    if (!err) { el.hidden = true; return; }
+    el.hidden = false;
+    el.innerHTML = '<b>Not saved \u2014 ' + esc(err.msg) + '.</b> ' +
+      esc(err.room) + ' is only in memory now, and will be lost if you close this. ' +
+      'Export it, or free space by dropping wall photos.' +
+      '<button id="swFix">Export this room as JSON now</button>';
+    $('swFix').onclick = function () {
+      guard(function () { X.share(new Blob([X.json()], { type: 'application/json' }), X.safeName() + '.json', store.p.name); });
+    };
+  }
+  store.onSaveState = showSaveWarning;
 
   /* ================= boot ================= */
   store.on(function (p, what) {
