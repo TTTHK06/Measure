@@ -46,7 +46,13 @@ a{color:var(--acc)}
   padding:var(--sat) 10px 0;display:flex;align-items:center;gap:8px;
   background:linear-gradient(#171a21,#141821);border-bottom:1px solid var(--line);z-index:40
 }
-#top .title{font-weight:650;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#top .title{
+  font-weight:650;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  background:transparent;border:0;padding:6px 4px;text-align:left;font-size:15px;display:flex;
+  align-items:center;gap:5px
+}
+#top .title .chev{color:var(--fg2);font-size:10px;flex:none}
+#top .title:active{opacity:.6}
 #top .chip{font-size:12px;color:var(--fg2);background:var(--bg3);border:1px solid var(--line);border-radius:99px;padding:3px 9px;white-space:nowrap}
 #top .chip b{color:var(--fg)}
 #top button{padding:6px 10px;font-size:13px}
@@ -220,12 +226,25 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
 .tiles{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--fg2);white-space:nowrap}
 .tiles input{width:42px;padding:8px 4px;text-align:center}
 .tiles b{color:var(--fg2)}
+
+/* room list */
+.rooms{display:flex;flex-direction:column;gap:6px;margin:4px 0 0}
+.roomrow{
+  display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:10px;padding:9px 11px
+}
+.roomrow.cur{border-color:var(--acc);background:#12281f}
+.roomrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;font-size:14px}
+.roomrow .meta{font-size:11px;color:var(--fg2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.roomrow button{padding:6px 9px;font-size:12px}
+.roomrow .here{font:600 9.5px/1 ui-monospace,monospace;letter-spacing:.07em;text-transform:uppercase;
+  background:var(--acc);color:#04211a;border-radius:99px;padding:3px 6px}
 </style>
 </head>
 <body>
 
 <div id="top">
-  <div class="title" id="roomName">Room 1</div>
+  <button class="title" id="roomName">Room 1 <span class="chev">&#9662;</span></button>
   <div class="chip" id="areaChip">— m²</div>
   <span class="trust" id="trustChip" hidden></span>
   <button id="btnHelp" class="ghost" title="How to use this">?</button>
@@ -391,9 +410,13 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
       </div>
 
       <div class="card">
-        <h3>Saved rooms</h3>
-        <div class="row"><input id="slotName" type="text" placeholder="Save as…"><button id="slotSave" class="blue">Save</button></div>
-        <div id="slotList" style="margin-top:8px"></div>
+        <h3>Rooms</h3>
+        <div class="grid2">
+          <button id="btnNewRoom" class="primary">+ New room</button>
+          <button id="btnDupRoom">Duplicate this room</button>
+        </div>
+        <div id="slotList" style="margin-top:10px"></div>
+        <p class="hint">The room you are working on is saved automatically before you switch away or start a new one.</p>
       </div>
 
       <div class="card">
@@ -1349,6 +1372,88 @@ window.RM = window.RM || {};
     store.emit('tex');
   };
 
+  /* ---- rooms ---------------------------------------------------------------
+     One room is "current"; the rest live in named slots. Anything with points in
+     it is written to its slot before we move away, so switching can never lose
+     work the user did not explicitly throw away. */
+
+  store.nextRoomName = function () {
+    var taken = {};
+    store.slots().forEach(function (s2) { taken[s2.name] = 1; });
+    taken[store.p.name] = 1;
+    var n = 1;
+    while (taken['Room ' + n]) n++;
+    return 'Room ' + n;
+  };
+
+  store.autosave = function () {
+    if (store.p.points && store.p.points.length) store.saveSlot(store.p.name);
+  };
+
+  /* Start a blank room. Building-wide settings carry over, because the next room
+     is nearly always in the same building: ceiling height, wall thickness,
+     ceiling void, units and the phone's calibration. */
+  store.newRoom = function (name) {
+    store.autosave();
+    store.snapshot();
+    var prev = store.p;
+    store.p = blank();
+    store.p.name = name || store.nextRoomName();
+    store.p.height = prev.height;
+    store.p.thickness = prev.thickness || 0;
+    store.p.ceilingVoid = prev.ceilingVoid || 0;
+    store.p.units = prev.units;
+    store.p.calib = prev.calib;
+    store.emit('newroom');
+    return store.p.name;
+  };
+
+  store.duplicateRoom = function (name) {
+    store.autosave();
+    store.snapshot();
+    var copy = JSON.parse(JSON.stringify(store.p));
+    copy.name = name || store.nextRoomName();
+    copy.updated = Date.now();
+    store.p = copy;
+    store.emit('newroom');
+    return copy.name;
+  };
+
+  store.renameRoom = function (name) {
+    if (!name || name === store.p.name) return false;
+    var old = store.p.name;
+    store.p.name = name;
+    /* move the slot across rather than leaving a stale copy behind */
+    if (store.slots().some(function (s2) { return s2.name === old; })) {
+      store.deleteSlot(old);
+      store.saveSlot(name);
+    }
+    store.emit('name');
+    return true;
+  };
+
+  store.roomList = function () {
+    var list = store.slots().map(function (s2) {
+      return {
+        name: s2.name,
+        current: s2.name === store.p.name,
+        n: (s2.points || []).length,
+        area: (s2.points || []).length >= 3 ? M.area(s2.points) : 0,
+        height: s2.height,
+        updated: s2.updated || 0
+      };
+    });
+    if (!list.some(function (r) { return r.current; })) {
+      list.push({
+        name: store.p.name, current: true, n: store.p.points.length,
+        area: store.p.points.length >= 3 ? M.area(store.p.points) : 0,
+        height: store.p.height, updated: store.p.updated || Date.now()
+      });
+    }
+    list.sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); });
+    return list;
+  };
+
   store.reset = function () {
     store.snapshot();
     var calib = store.p.calib, name = store.p.name, h = store.p.height;
@@ -1366,6 +1471,16 @@ window.RM = window.RM || {};
   };
 
   /* --- derived --- */
+  /* An opening's area only counts where it actually falls on the wall. A shape that
+     gets re-captured can leave an opening hanging past the end of a shorter wall;
+     the 3D builder already clips it, and the numbers must agree. */
+  function openingArea(o, wallLen, h) {
+    var s0 = M.clamp(o.off, 0, wallLen), s1 = M.clamp(o.off + o.w, 0, wallLen);
+    var t0 = M.clamp(o.sill, 0, h), t1 = M.clamp(o.head, 0, h);
+    return Math.max(0, s1 - s0) * Math.max(0, t1 - t0);
+  }
+  store.openingArea = openingArea;
+
   store.stats = function () {
     var p = store.p, n = p.points.length;
     if (n < 3) return { area: 0, perimeter: 0, wallArea: 0, volume: 0, n: n };
@@ -1373,7 +1488,8 @@ window.RM = window.RM || {};
     var openArea = 0;
     store.syncWalls();
     for (var i = 0; i < n; i++) {
-      (p.walls[i].openings || []).forEach(function (o) { openArea += o.w * (o.head - o.sill); });
+      var wl = M.dist(p.points[i], p.points[(i + 1) % n]);
+      (p.walls[i].openings || []).forEach(function (o) { openArea += openingArea(o, wl, p.height); });
     }
     var th = p.thickness || 0, out = {
       n: n,
@@ -1408,7 +1524,15 @@ window.RM = window.RM || {};
         locked: p.locks[i] != null,
         openings: p.walls[i].openings || [],
         tex: p.walls[i].tex,
-        area: Math.max(0, len * p.height - (p.walls[i].openings || []).reduce(function (s, o) { return s + o.w * (o.head - o.sill); }, 0))
+        area: Math.max(0, len * p.height - (p.walls[i].openings || []).reduce(function (s, o) {
+          return s + openingArea(o, len, p.height);
+        }, 0)),
+        openingArea: (p.walls[i].openings || []).reduce(function (s, o) {
+          return s + openingArea(o, len, p.height);
+        }, 0),
+        clipped: (p.walls[i].openings || []).some(function (o) {
+          return o.off < -1e-6 || o.off + o.w > len + 1e-6 || o.head > p.height + 1e-6;
+        })
       });
     }
     return out;
@@ -1457,8 +1581,11 @@ window.RM = window.RM || {};
   store.loadSlot = function (name) {
     var s = store.slots().find(function (x) { return x.name === name; });
     if (!s) return false;
+    if (name === store.p.name) return false;
+    store.autosave();
     store.snapshot();
     store.p = Object.assign(blank(), JSON.parse(JSON.stringify(s)));
+    store.keepDeviceCalib();
     store.syncWalls();
     store.emit('load');
     return true;
@@ -3795,16 +3922,18 @@ window.RM = window.RM || {};
     rows.push([]);
     rows.push(['Wall', 'Length (m)', 'Height (m)', 'Gross area (m2)', 'Openings (m2)', 'Net area (m2)', 'Bearing (deg)', 'Length locked']);
     walls.forEach(function (w) {
-      var op = w.openings.reduce(function (s, o) { return s + o.w * (o.head - o.sill); }, 0);
+      var op = w.openingArea;
       rows.push(['W' + (w.i + 1), w.len.toFixed(3), p.height.toFixed(3), (w.len * p.height).toFixed(3),
                  op.toFixed(3), w.area.toFixed(3), w.angle.toFixed(1), w.locked ? 'yes' : 'no']);
     });
     rows.push([]);
-    rows.push(['Wall', 'Opening', 'Type', 'Offset (m)', 'Width (m)', 'Sill (m)', 'Head (m)', 'Area (m2)']);
+    rows.push(['Wall', 'Opening', 'Type', 'Offset (m)', 'Width (m)', 'Sill (m)', 'Head (m)', 'Area (m2)', 'Note']);
     walls.forEach(function (w) {
       w.openings.forEach(function (o, k) {
+        var eff = store.openingArea(o, w.len, p.height);
+        var full = o.w * (o.head - o.sill);
         rows.push(['W' + (w.i + 1), k + 1, o.kind, o.off.toFixed(3), o.w.toFixed(3), o.sill.toFixed(3), o.head.toFixed(3),
-                   (o.w * (o.head - o.sill)).toFixed(3)]);
+                   eff.toFixed(3), Math.abs(eff - full) > 1e-4 ? 'clipped to wall' : '']);
       });
     });
     return rows.map(function (r) {
@@ -3979,6 +4108,13 @@ window.RM = window.RM || {};
       return { step: 1, total: 4, act: 'Only ' + n + ' corner' + (n > 1 ? 's' : '') + ' &mdash; a room needs at least 3',
                why: 'Add the rest on the Photo or Scan tab, or press Rectangle&hellip; to start over from typed dimensions.' };
     }
+    var bad = store.wallList().filter(function (w) { return w.clipped; });
+    if (bad.length) {
+      return { act: 'Opening runs past the end of wall ' + (bad[0].i + 1),
+               why: 'The shape changed after that door or window was placed, so it no longer fits. ' +
+                    'Areas only count the part that lands on the wall. Tap the wall to fix the offset or width.',
+               tone: 'warn' };
+    }
     if (L === 0) {
       return { step: 2, total: 4, act: 'Tape one wall, tap it here, type the length',
                why: 'Tap a wall &rarr; type its true length &rarr; Set. It turns blue and is locked. This single step is the biggest accuracy gain available to you.', tone: 'warn' };
@@ -4113,7 +4249,7 @@ window.RM = window.RM || {};
 
   function refreshTop() {
     var st = store.stats();
-    $('roomName').textContent = store.p.name;
+    $('roomName').innerHTML = esc(store.p.name) + ' <span class="chev">\u25be</span>';
     $('areaChip').innerHTML = st.n < 3
       ? '<b>' + st.n + '</b> pts'
       : '<b>' + st.area.toFixed(2) + '</b> m² · <b>' + st.n + '</b> walls';
@@ -4127,16 +4263,99 @@ window.RM = window.RM || {};
     if (store.undo()) { toast('Undone'); plan.draw(); } else toast('Nothing to undo');
   });
 
-  $('roomName').addEventListener('click', function () {
-    sheet('<h2>Room name</h2><div class="field"><input id="nmIn" type="text" value="' + esc(store.p.name) + '"></div>' +
-      '<div class="row"><button class="grow" onclick="RMcloseSheet()">Cancel</button>' +
-      '<button class="grow primary" id="nmOk">Save</button></div>', function () {
-        $('nmOk').onclick = function () {
-          store.p.name = $('nmIn').value || 'Room 1';
-          store.emit('name'); closeSheet();
+  /* ---------------- rooms ---------------- */
+  function roomRows() {
+    return '<div class="rooms">' + store.roomList().map(function (r) {
+      return '<div class="roomrow' + (r.current ? ' cur' : '') + '">' +
+        '<div class="nm">' + esc(r.name) + '</div>' +
+        '<div class="meta">' + (r.n >= 3 ? r.area.toFixed(2) + ' m\u00b2' : r.n + ' pts') + '</div>' +
+        (r.current ? '<span class="here">here</span>'
+                   : '<button class="rOpen blue" data-n="' + esc(r.name) + '">Open</button>' +
+                     '<button class="rDel danger" data-n="' + esc(r.name) + '">\u2715</button>') +
+        '</div>';
+    }).join('') + '</div>';
+  }
+
+  function wireRoomRows(after) {
+    Array.prototype.forEach.call(document.querySelectorAll('.rOpen'), function (b) {
+      b.onclick = function () {
+        var n = b.dataset.n;
+        if (store.loadSlot(n)) {
+          need3d = true; plan._fitted = false; plan.fit(); refreshOut();
+          toast('Opened ' + n);
+        }
+        if (after) after();
+      };
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.rDel'), function (b) {
+      b.onclick = function () {
+        var n = b.dataset.n;
+        sheet('<h2>Delete &ldquo;' + esc(n) + '&rdquo;?</h2>' +
+          '<p class="hint">This removes that saved room for good. The room you are working on is not affected.</p>' +
+          '<div class="row"><button class="grow" id="dNo">Cancel</button>' +
+          '<button class="grow danger" id="dYes">Delete</button></div>', function () {
+            $('dNo').onclick = function () { openRooms(); };
+            $('dYes').onclick = function () {
+              store.deleteSlot(n);
+              toast('Deleted ' + n);
+              openRooms();
+            };
+          });
+      };
+    });
+  }
+
+  function openRooms() {
+    sheet(
+      '<h2>Rooms</h2>' +
+      '<div class="row"><input id="rnIn" type="text" value="' + esc(store.p.name) + '">' +
+      '<button id="rnOk" class="blue">Rename</button></div>' +
+      '<div class="sep"></div>' +
+      '<div class="grid2"><button id="rNew" class="primary">+ New room</button>' +
+      '<button id="rDup">Duplicate</button></div>' +
+      '<div class="sep"></div>' +
+      roomRows() +
+      '<p class="hint">Your current room is saved automatically before switching. Ceiling height, wall thickness, void and calibration carry over to a new room.</p>' +
+      '<button style="width:100%;margin-top:10px" onclick="RMcloseSheet()">Close</button>',
+      function () {
+        $('rnOk').onclick = function () {
+          var v = ($('rnIn').value || '').trim();
+          if (!v) return toast('Give it a name');
+          if (v !== store.p.name && store.slots().some(function (x) { return x.name === v; })) {
+            return toast('There is already a room called that');
+          }
+          store.renameRoom(v);
+          refreshOut();
+          toast('Renamed to ' + v);
+          openRooms();
         };
+        $('rNew').onclick = function () { startNewRoom(); };
+        $('rDup').onclick = function () {
+          var n = store.duplicateRoom();
+          need3d = true; refreshOut(); plan.draw();
+          closeSheet();
+          toast('Copied to ' + n + ' \u2014 same shape, new room');
+        };
+        wireRoomRows(openRooms);
       });
-  });
+  }
+  window.RMopenRooms = openRooms;
+
+  function startNewRoom() {
+    var carried = store.p, hadWork = carried.points.length > 0;
+    var n = store.newRoom();
+    need3d = true;
+    plan._fitted = false;
+    plan.sel = null;
+    if (plan.onselect) plan.onselect(null);
+    plan.fit();
+    refreshOut();
+    closeSheet();
+    setView('photo');
+    toast(hadWork ? 'Saved ' + carried.name + '. Started ' + n : 'Started ' + n, 3500);
+  }
+
+  $('roomName').addEventListener('click', openRooms);
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
@@ -4780,34 +4999,17 @@ window.RM = window.RM || {};
     e.target.value = '';
   });
 
-  $('slotSave').addEventListener('click', function () {
-    var n = $('slotName').value || store.p.name;
-    store.saveSlot(n);
-    $('slotName').value = '';
-    renderSlots();
-    toast('Saved “' + n + '”');
+  $('btnNewRoom').addEventListener('click', function () { startNewRoom(); });
+  $('btnDupRoom').addEventListener('click', function () {
+    var n = store.duplicateRoom();
+    need3d = true; refreshOut(); plan.draw();
+    toast('Copied to ' + n);
   });
 
+
   function renderSlots() {
-    var list = store.slots();
-    $('slotList').innerHTML = list.length
-      ? list.map(function (s) {
-          var a = s.points && s.points.length >= 3 ? M.area(s.points).toFixed(1) + ' m²' : (s.points || []).length + ' pts';
-          return '<div class="row" style="margin-bottom:6px"><div class="grow">' + esc(s.name) + ' <span class="badge">' + a + '</span></div>' +
-            '<button data-n="' + esc(s.name) + '" class="slotOpen blue" style="padding:6px 10px">Open</button>' +
-            '<button data-n="' + esc(s.name) + '" class="slotDel danger" style="padding:6px 10px">✕</button></div>';
-        }).join('')
-      : '<div class="hint">Nothing saved yet</div>';
-    Array.prototype.forEach.call(document.querySelectorAll('.slotOpen'), function (b) {
-      b.onclick = function () {
-        store.loadSlot(b.dataset.n);
-        need3d = true; plan._fitted = false; plan.fit(); refreshOut();
-        toast('Opened ' + b.dataset.n);
-      };
-    });
-    Array.prototype.forEach.call(document.querySelectorAll('.slotDel'), function (b) {
-      b.onclick = function () { store.deleteSlot(b.dataset.n); renderSlots(); };
-    });
+    $('slotList').innerHTML = roomRows();
+    wireRoomRows(function () { refreshOut(); });
   }
 
   /* ================= boot ================= */
