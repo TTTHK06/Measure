@@ -156,6 +156,62 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
   .stats{grid-template-columns:repeat(4,1fr)}
   .pad{max-width:820px;margin:0 auto}
 }
+
+/* ---------- live coach ---------- */
+.coach{
+  background:var(--bg2);border-bottom:1px solid var(--line);padding:9px 12px;flex:none
+}
+.coach.flat{background:var(--bg2);border:1px solid var(--line);border-radius:14px;margin:0 0 10px}
+.stage .msg{padding:9px 11px}
+.crow{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.cstep{
+  font:600 10px/1 ui-monospace,monospace;letter-spacing:.09em;text-transform:uppercase;color:var(--fg2)
+}
+.cdots{display:flex;gap:4px;align-items:center}
+.cdots i{width:14px;height:3px;border-radius:2px;background:var(--line);display:block}
+.cdots i.was{background:var(--acc);opacity:.5}
+.cdots i.is{background:var(--acc);width:20px}
+.cact{font-size:14.5px;font-weight:600;line-height:1.35}
+.cwhy{font-size:12.5px;color:var(--fg2);margin-top:3px;line-height:1.45}
+.cwarn{
+  font-size:12.5px;margin-top:6px;padding:6px 8px;border-radius:7px;
+  background:#2a2210;border:1px solid #5c4a1a;color:#ffdc9a
+}
+.coach.tone-warn .cact,.stage .msg.tone-warn .cact{color:var(--warn)}
+.coach.tone-stop .cact,.stage .msg.tone-stop .cact{color:var(--bad)}
+.coach.tone-done .cact,.stage .msg.tone-done .cact{color:var(--acc)}
+.trust{
+  font:600 10px/1 ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;
+  padding:4px 8px;border-radius:99px;white-space:nowrap
+}
+.trust.warn{background:var(--warn);color:#3a2500}
+.trust.ok{background:var(--acc);color:#04211a}
+#top button#btnHelp{width:30px;padding:6px 0;font-weight:700;color:var(--fg2)}
+
+/* help sheet */
+.helpsteps{counter-reset:h;display:flex;flex-direction:column;gap:9px;margin:8px 0 0}
+.helpsteps .hs{counter-increment:h;display:grid;grid-template-columns:22px 1fr;gap:10px;font-size:13.5px}
+.helpsteps .hs:before{
+  content:counter(h);font:600 11px/19px ui-monospace,monospace;color:var(--acc);
+  background:var(--bg3);border:1px solid var(--line);border-radius:5px;text-align:center;height:19px
+}
+.helpsteps .hs b{display:block}
+.helpsteps .hs span{color:var(--fg2)}
+.keyrow{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}
+.keyrow div{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg2)}
+.keyrow i{width:16px;height:3px;border-radius:2px;display:block}
+
+/* coach: tap to collapse once you know the routine */
+.coach,.stage .msg{position:relative;cursor:pointer}
+.coach.mini .cwhy,.coach.mini .cwarn,.coach.mini .crow,
+.stage .msg.mini .cwhy,.stage .msg.mini .crow{display:none}
+.coach.mini .cact,.stage .msg.mini .cact{font-size:13.5px;padding-right:34px}
+.cmore{
+  position:absolute;right:8px;top:8px;font:500 9.5px/1 ui-monospace,monospace;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);
+  background:var(--bg3);border:1px solid var(--line);border-radius:99px;padding:3px 6px
+}
+.coach .cact,.stage .msg .cact{padding-right:44px}
 </style>
 </head>
 <body>
@@ -163,6 +219,8 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
 <div id="top">
   <div class="title" id="roomName">Room 1</div>
   <div class="chip" id="areaChip">— m²</div>
+  <span class="trust" id="trustChip" hidden></span>
+  <button id="btnHelp" class="ghost" title="How to use this">?</button>
   <button id="btnUndo" class="ghost" title="Undo">↶</button>
 </div>
 
@@ -221,6 +279,7 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
 
   <!-- ============ PLAN ============ -->
   <section class="view flex" id="v-plan">
+    <div class="coach" id="planMsg"></div>
     <div id="planWrap">
       <canvas id="planCv"></canvas>
       <div class="planTools">
@@ -240,6 +299,7 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
 
   <!-- ============ 3D ============ -->
   <section class="view flex" id="v-3d">
+    <div class="coach" id="glMsg"></div>
     <div id="glWrap">
       <canvas id="gl"></canvas>
       <div class="glHud" id="glHud"></div>
@@ -261,6 +321,7 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
   <!-- ============ EXPORT / SETUP ============ -->
   <section class="view" id="v-out">
     <div class="pad">
+      <div class="coach flat" id="outMsg"></div>
       <div class="card">
         <h3>Room</h3>
         <div class="grid2">
@@ -375,19 +436,83 @@ window.RM = window.RM || {};
   };
 
   /* ---------------- 3x3 homography ---------------- */
-  /* src: 4 image points {x,y}; dst: 4 world points {x,y}. Returns row-major 9-array. */
-  M.homography = function (src, dst) {
-    if (src.length < 4 || dst.length < 4) return null;
-    var A = [], b = [];
-    for (var i = 0; i < 4; i++) {
-      var x = src[i].x, y = src[i].y, X = dst[i].x, Y = dst[i].y;
-      A.push([x, y, 1, 0, 0, 0, -x * X, -y * X]); b.push(X);
-      A.push([0, 0, 0, x, y, 1, -x * Y, -y * Y]); b.push(Y);
+  M.mul3 = function (a, b) {
+    var o = new Array(9);
+    for (var r = 0; r < 3; r++) for (var c = 0; c < 3; c++) {
+      o[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
     }
-    var h = M.solve(A, b);
-    if (!h) return null;
-    for (var k = 0; k < 8; k++) if (!isFinite(h[k])) return null;
-    return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+    return o;
+  };
+
+  /* Hartley normalization: centre on the centroid, scale mean distance to sqrt(2).
+     Conditions the solve and moves the degenerate cases out of the way. */
+  function normalize(pts) {
+    var n = pts.length, cx = 0, cy = 0, i;
+    for (i = 0; i < n; i++) { cx += pts[i].x; cy += pts[i].y; }
+    cx /= n; cy /= n;
+    var d = 0;
+    for (i = 0; i < n; i++) d += Math.hypot(pts[i].x - cx, pts[i].y - cy);
+    d /= n;
+    var s = (d > 1e-12) ? Math.SQRT2 / d : 1;
+    var out = [];
+    for (i = 0; i < n; i++) out.push({ x: (pts[i].x - cx) * s, y: (pts[i].y - cy) * s });
+    return {
+      pts: out,
+      T: [s, 0, -s * cx, 0, s, -s * cy, 0, 0, 1],
+      Tinv: [1 / s, 0, cx, 0, 1 / s, cy, 0, 0, 1]
+    };
+  }
+
+  /* src: 4 image points {x,y}; dst: 4 target points {x,y}. Returns row-major 9-array.
+     Solves the homogeneous 8x9 system without assuming h33 = 1 — that assumption fails
+     whenever the plane's horizon passes through the image origin, which a symmetric
+     reference quad does exactly. */
+  M.homography = function (src, dst) {
+    if (!src || !dst || src.length < 4 || dst.length < 4) return null;
+    var S = normalize(src.slice(0, 4)), D = normalize(dst.slice(0, 4));
+    var A = [], i;
+    for (i = 0; i < 4; i++) {
+      var x = S.pts[i].x, y = S.pts[i].y, X = D.pts[i].x, Y = D.pts[i].y;
+      A.push([-x, -y, -1, 0, 0, 0, x * X, y * X, X]);
+      A.push([0, 0, 0, -x, -y, -1, x * Y, y * Y, Y]);
+    }
+    /* nullspace by elimination: fix each unknown to 1 in turn, keep the best residual */
+    var best = null;
+    for (var k = 0; k < 9; k++) {
+      var M8 = [], b8 = [], r, c;
+      for (r = 0; r < 8; r++) {
+        var row = [];
+        for (c = 0; c < 9; c++) if (c !== k) row.push(A[r][c]);
+        M8.push(row);
+        b8.push(-A[r][k]);
+      }
+      var sol = M.solve(M8, b8);
+      if (!sol) continue;
+      var h = [], j = 0, ok = true;
+      for (c = 0; c < 9; c++) {
+        if (c === k) h.push(1);
+        else { h.push(sol[j]); if (!isFinite(sol[j])) ok = false; j++; }
+      }
+      if (!ok) continue;
+      var res = 0, norm = 0;
+      for (r = 0; r < 8; r++) {
+        var v = 0;
+        for (c = 0; c < 9; c++) v += A[r][c] * h[c];
+        res += v * v;
+      }
+      for (c = 0; c < 9; c++) norm += h[c] * h[c];
+      res /= norm;                                  // scale-invariant residual
+      if (!best || res < best.res) best = { res: res, h: h };
+    }
+    if (!best || best.res > 1e-8) return null;
+
+    /* undo the normalization: H = Tdst^-1 * Hn * Tsrc */
+    var H = M.mul3(M.mul3(D.Tinv, best.h), S.T);
+    var scale = Math.abs(H[8]) > 1e-12 ? H[8] : Math.max.apply(null, H.map(Math.abs));
+    if (!isFinite(scale) || Math.abs(scale) < 1e-300) return null;
+    for (i = 0; i < 9; i++) H[i] /= scale;
+    for (i = 0; i < 9; i++) if (!isFinite(H[i])) return null;
+    return H;
   };
 
   M.applyH = function (H, p) {
@@ -2933,6 +3058,213 @@ window.RM = window.RM || {};
 })();
 </script>
 <script>
+/* js/coach.js */
+/* coach.js — live, state-driven guidance: what to do right now, in every tab.
+   Reads real app state, so it can never drift out of step with the UI.
+   Namespace: RM.coach */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M, S = RM.S, store = RM.store, photo = RM.photo, scan = RM.scan;
+  var coach = { view: 'scan', mini: false };
+  try { coach.mini = localStorage.getItem('roomscan.coach.mini') === '1'; } catch (e) {}
+
+  coach.toggle = function () {
+    coach.mini = !coach.mini;
+    try { localStorage.setItem('roomscan.coach.mini', coach.mini ? '1' : '0'); } catch (e) {}
+    coach.render();
+  };
+
+  function locked() {
+    return Object.keys(store.p.locks || {}).length;
+  }
+  function squared() {
+    var p = store.p.points, n = p.length;
+    if (n < 3) return false;
+    for (var i = 0; i < n; i++) {
+      var a = M.vertexAngle(p, i);
+      if (Math.abs(a - 90) > 0.3 && Math.abs(a - 270) > 0.3 && Math.abs(a - 180) > 0.3) return false;
+    }
+    return true;
+  }
+
+  /* ---------------- per-tab state machines ---------------- */
+
+  function scanState() {
+    var c = store.p.calib, n = store.p.points.length;
+    if (!S.secure) {
+      return { step: 0, total: 4, act: 'Scan needs an https:// page',
+               why: 'Phone cameras and motion sensors are blocked here. Use the Photo tab &mdash; it works anywhere and is more accurate anyway.', tone: 'stop' };
+    }
+    if (!scan.running) {
+      return { step: 1, total: 4, act: 'Tap Start camera',
+               why: 'Allow camera and motion access when asked. Stand where you can see as many floor corners as possible.' };
+    }
+    if (!c.verified) {
+      return { step: 2, total: 4, act: 'Calibrate before marking anything',
+               why: 'Until you do, every distance is a guess. Mark a spot on the floor, tape-measure to it, then Calibrate&hellip; &rarr; method A.', tone: 'warn' };
+    }
+    if (scan.reg) {
+      var g = scan.reg.got.length, want = scan.reg.need[g];
+      return { step: 3, total: 4, act: 'Re-sight corner ' + (want + 1) + ', then Mark corner',
+               why: g ? 'One more. Two known corners are enough to work out where you are standing now.'
+                      : 'You have moved, so the app needs two corners it already knows to re-fix your position.',
+               tone: 'warn' };
+    }
+
+    /* live aim feedback once calibrated */
+    var warn = null, f = null;
+    try { f = scan.floorAtAim(); } catch (e) {}
+    var roll = Math.abs(S.roll());
+    if (!f) warn = 'Aiming above the horizon &mdash; there is no floor there. Aim lower.';
+    else if (roll > 6) warn = 'Phone is tilted ' + roll.toFixed(0) + '&deg; sideways. Level it or the plan will skew.';
+    else if (f.range > 15) warn = 'That point is ' + f.range.toFixed(1) + ' m away and close to the horizon &mdash; small aim errors become big distance errors.';
+
+    if (n === 0) {
+      return { step: 3, total: 4, act: 'Aim where the wall meets the floor, then Mark corner',
+               why: 'Tap the screen to move the aim point. Stay on this spot and turn on the spot to reach the other corners.', warn: warn };
+    }
+    if (n < 3) {
+      var span = scan.lastSpan();
+      return { step: 3, total: 4, act: 'Mark the next corner &mdash; ' + n + ' done',
+               why: span ? 'Last wall came out ' + span.toFixed(3) + ' m. Check one against a tape before you trust the set.'
+                         : 'Keep going round the room in order.', warn: warn };
+    }
+    return { step: 4, total: 4, act: n + ' corners &mdash; take the ceiling height',
+             why: 'Aim at the wall/ceiling line directly above the corner you marked last, then Ceiling ht. Then go to Plan and lock a taped wall.',
+             warn: warn, done: true };
+  }
+
+  function photoState() {
+    if (!photo.img) {
+      return { step: 1, total: 5, act: 'Put a known object on the floor, then tap Photo',
+               why: 'A4 sheet, floor tile, or a 1 m square of tape &mdash; flat on the floor, near the corners you care about. Shoot so the object and the floor corners are both in frame.' };
+    }
+    if (photo.ref.length < 4) {
+      var next = ['A &mdash; near-left', 'B &mdash; near-right', 'C &mdash; far-right', 'D &mdash; far-left'][photo.ref.length];
+      return { step: 2, total: 5, act: 'Tap the object&rsquo;s corner ' + next,
+               why: 'Going round in this order keeps the plan the right way round. Drag a marker to fine-tune &mdash; a magnifier appears while you drag. ' +
+                    photo.ref.length + ' of 4 placed.' };
+    }
+    if (!photo.H) {
+      return { step: 2, total: 5, act: 'Those four points don&rsquo;t solve',
+               why: 'Two corners may be on top of each other, or in a line. Drag them back onto the object&rsquo;s actual corners.', tone: 'stop' };
+    }
+    if (photo.mode === 'ref') {
+      var pr = photo.precisionAt({ x: photo.img.width / 2, y: photo.img.height * 0.75 });
+      return { step: 3, total: 5, act: 'Check the green grid lies flat on the floor',
+               why: 'It is 1 m squares. If it climbs a wall or skews, drag the reference corners until it settles. ' +
+                    (pr ? 'Precision mid-frame: about ' + pr.toFixed(0) + ' mm per pixel. ' : '') +
+                    'Then press 2 &middot; Corners.' };
+    }
+    if (photo.mode === 'wall') {
+      return { step: 5, total: 5, act: 'Tap the wall&rsquo;s corners: BL, BR, TR, TL',
+               why: 'Bottom-left, bottom-right, top-right, top-left. Then pick which wall it is and the photo is straightened onto it.' };
+    }
+    var k = photo.corners.length;
+    if (k < 3) {
+      return { step: 4, total: 5, act: 'Tap each floor corner of the room' + (k ? ' &mdash; ' + k + ' done' : ''),
+               why: 'Go round in order. Wall lengths appear as you tap, so you can sanity-check against the room. Corners nearer the reference object are more accurate.' };
+    }
+    return { step: 5, total: 5, act: k + ' corners &mdash; press Use corners as room',
+             why: 'Then tape one wall and lock it on the Plan tab. That is what turns this from a sketch into a measurement.', done: true };
+  }
+
+  function planState() {
+    var n = store.p.points.length, L = locked();
+    if (n === 0) {
+      return { step: 1, total: 4, act: 'No shape yet',
+               why: 'Capture one on the Photo tab, or press Rectangle&hellip; if the room is a plain rectangle and you have a tape.' };
+    }
+    if (n < 3) {
+      return { step: 1, total: 4, act: 'Only ' + n + ' corner' + (n > 1 ? 's' : '') + ' &mdash; a room needs at least 3',
+               why: 'Add the rest on the Photo or Scan tab, or press Rectangle&hellip; to start over from typed dimensions.' };
+    }
+    if (L === 0) {
+      return { step: 2, total: 4, act: 'Tape one wall, tap it here, type the length',
+               why: 'Tap a wall &rarr; type its true length &rarr; Set. It turns blue and is locked. This single step is the biggest accuracy gain available to you.', tone: 'warn' };
+    }
+    if (!squared()) {
+      return { step: 3, total: 4, act: L + ' wall' + (L > 1 ? 's' : '') + ' locked &mdash; press Square up',
+               why: 'Wall directions snap to 90&deg; while your locked lengths are held exactly. Skip this one if the room genuinely is not square.' };
+    }
+    return { step: 4, total: 4, act: 'Squared, with ' + L + ' measured wall' + (L > 1 ? 's' : ''),
+             why: 'Add doors and windows (tap a wall &rarr; + opening) so the net wall areas are right, then Export.', done: true };
+  }
+
+  function modelState() {
+    var n = store.p.points.length;
+    if (n < 3) return { act: 'Nothing to show yet', why: 'A room needs at least 3 corners.' };
+    var tex = (store.p.walls || []).filter(function (w) { return w.tex; }).length;
+    return {
+      act: 'One finger orbits, two fingers pinch and pan',
+      why: 'Fit / Top / Inside jump to set views. ' +
+           (tex ? tex + ' wall' + (tex > 1 ? 's' : '') + ' textured with your photos.'
+                : 'To put real wall photos on it: Photo tab &rarr; 3 &middot; Wall photo.'),
+      done: true
+    };
+  }
+
+  function exportState() {
+    var n = store.p.points.length, L = locked();
+    if (n < 3) return { act: 'Nothing to export yet', why: 'A room needs at least 3 corners before there is a model to write.' };
+    if (L === 0) {
+      return { act: 'These dimensions are unverified estimates',
+               why: 'No wall has been checked against a tape. Lock one on the Plan tab before this goes anywhere near a drawing.', tone: 'warn' };
+    }
+    return { act: 'Ready &mdash; ' + L + ' wall' + (L > 1 ? 's' : '') + ' tape-verified',
+             why: 'GLB for the 3D model, SVG for a dimensioned plan, CSV for the wall schedule, JSON to reopen later.', done: true };
+  }
+
+  var MACHINES = { scan: scanState, photo: photoState, plan: planState, '3d': modelState, out: exportState };
+
+  /* ---------------- rendering ---------------- */
+  function html(s) {
+    var out = '';
+    if (s.step) {
+      var dots = '';
+      for (var i = 1; i <= s.total; i++) {
+        dots += '<i class="' + (i < s.step ? 'was' : i === s.step ? 'is' : '') + '"></i>';
+      }
+      out += '<div class="crow"><span class="cstep">Step ' + s.step + ' of ' + s.total + '</span><span class="cdots">' + dots + '</span></div>';
+    }
+    out += '<div class="cact">' + s.act + '</div>';
+    if (s.why) out += '<div class="cwhy">' + s.why + '</div>';
+    if (s.warn) out += '<div class="cwarn">' + s.warn + '</div>';
+    return out;
+  }
+
+  coach.render = function (view) {
+    if (view) coach.view = view;
+    var fn = MACHINES[coach.view];
+    if (!fn) return;
+    var s;
+    try { s = fn(); } catch (e) { return; }
+    var el = document.getElementById({ scan: 'scanMsg', photo: 'photoMsg', plan: 'planMsg', '3d': 'glMsg', out: 'outMsg' }[coach.view]);
+    if (!el) return;
+    el.innerHTML = html(s) + '<span class="cmore">' + (coach.mini ? 'more' : 'less') + '</span>';
+    el.className = el.className.replace(/\s*(tone-\w+|mini)/g, '') +
+                   (coach.mini ? ' mini' : '') +
+                   (s.tone ? ' tone-' + s.tone : (s.done ? ' tone-done' : ''));
+    if (!el._wired) {
+      el._wired = true;
+      el.addEventListener('click', function () { coach.toggle(); });
+    }
+    coach.last = s;
+  };
+
+  /* trust badge for the title bar — is any dimension actually measured? */
+  coach.trust = function () {
+    var n = store.p.points.length, L = locked();
+    if (n < 3) return null;
+    if (L === 0) return { cls: 'warn', text: 'estimated' };
+    return { cls: 'ok', text: L + ' taped' };
+  };
+
+  RM.coach = coach;
+})();
+</script>
+<script>
 /* js/app.js */
 /* app.js — UI wiring for RoomScan */
 (function () {
@@ -2974,6 +3306,7 @@ window.RM = window.RM || {};
     if (v === 'photo') photo.draw();
     if (v === '3d') open3d();
     if (v === 'out') refreshOut();
+    RM.coach.render(v);
   }
   Array.prototype.forEach.call(document.querySelectorAll('#tabs button'), function (b) {
     b.addEventListener('click', function () { setView(b.dataset.v); });
@@ -2986,6 +3319,9 @@ window.RM = window.RM || {};
       ? '<b>' + st.n + '</b> pts'
       : '<b>' + st.area.toFixed(2) + '</b> m² · <b>' + st.n + '</b> walls';
     $('btnUndo').disabled = !store.canUndo();
+    var tr = RM.coach.trust(), tc = $('trustChip');
+    if (tr) { tc.hidden = false; tc.className = 'trust ' + tr.cls; tc.textContent = tr.text; }
+    else tc.hidden = true;
   }
 
   $('btnUndo').addEventListener('click', function () {
@@ -3009,6 +3345,33 @@ window.RM = window.RM || {};
     });
   }
 
+  /* ---------------- help sheet ---------------- */
+  $('btnHelp').addEventListener('click', function () {
+    sheet(
+      '<h2>How to measure a room</h2>' +
+      '<div class="okbox">The routine that gives dimensions you can put on a drawing. Twenty seconds of tape work does more than any amount of tapping.</div>' +
+      '<div class="helpsteps">' +
+      '<div class="hs"><div><b>Put a known object on the floor</b><span>A4 sheet, floor tile, or a 1 m square of tape &mdash; flat, near the corners that matter.</span></div></div>' +
+      '<div class="hs"><div><b>Photo tab &rarr; shoot the room</b><span>The object and the floor corners both in frame. Stand up, don&rsquo;t crouch.</span></div></div>' +
+      '<div class="hs"><div><b>Tap the object&rsquo;s corners A B C D</b><span>Near-left, near-right, far-right, far-left. Drag to fine-tune with the magnifier.</span></div></div>' +
+      '<div class="hs"><div><b>Check the green 1 m grid lies flat</b><span>If it climbs a wall, your taps are off. This is the accuracy check.</span></div></div>' +
+      '<div class="hs"><div><b>Tap each floor corner, then Use corners as room</b><span>Go round in order; wall lengths appear live.</span></div></div>' +
+      '<div class="hs"><div><b>Tape one wall &mdash; tap it on Plan, type the length, Set</b><span>It locks (blue). This is the step that matters most.</span></div></div>' +
+      '<div class="hs"><div><b>Square up, add doors and windows, Export</b><span>Locked lengths are held exactly while the walls snap to 90&deg;.</span></div></div>' +
+      '</div>' +
+      '<div class="sep"></div>' +
+      '<h3 style="margin:0 0 4px;font-size:13px">Plan colours</h3>' +
+      '<div class="keyrow"><div><i style="background:#39d0a8"></i>estimated</div>' +
+      '<div><i style="background:#2b7fff"></i>locked, you taped it</div>' +
+      '<div><i style="background:#ffb64d"></i>selected</div></div>' +
+      '<div class="sep"></div>' +
+      '<p class="hint" style="margin-top:0">No reference object handy? <b>Scan</b> tab measures with the phone&rsquo;s tilt sensors instead, but needs calibrating once (Calibrate&hellip; &rarr; method A) and an https:// page. ' +
+      'Plain rectangular room and a tape? <b>Plan &rarr; Rectangle&hellip;</b> is the fastest accurate route of all.</p>' +
+      '<p class="hint">Accuracy: photo &plusmn;1&ndash;3%, scan &plusmn;2&ndash;5%, tape-locked walls as good as your tape. Check one wall against a tape on a new phone.</p>' +
+      '<button style="width:100%;margin-top:10px" onclick="RMcloseSheet()">Close</button>'
+    );
+  });
+
   /* ================= SCAN ================= */
   $('btnCam').addEventListener('click', function () {
     if (scan.running) {
@@ -3031,11 +3394,7 @@ window.RM = window.RM || {};
     });
   });
 
-  function msgScan() {
-    $('scanMsg').innerHTML = store.p.calib.verified
-      ? 'Stand still. Aim the crosshair where the <b>wall meets the floor</b> at a corner, then <b>Mark corner</b>. Turn on the spot to reach every corner.'
-      : '<b>Not calibrated.</b> Dimensions will be rough guesses until you tap <b>Calibrate…</b>';
-  }
+  function msgScan() { RM.coach.render('scan'); }
 
   function hud() {
     if (!scan.running) return;
@@ -3046,22 +3405,22 @@ window.RM = window.RM || {};
       (c.verified ? ' <span class="badge ok">cal</span>' : ' <span class="badge warn">uncal</span>') +
       (scan.stationIdx ? ' · spot ' + (scan.stationIdx + 1) : '');
   }
-  setInterval(function () { if (scan.running && view === 'scan') hud(); }, 250);
+  setInterval(function () {
+    if (scan.running && view === 'scan') { hud(); RM.coach.render('scan'); }
+  }, 250);
 
   $('btnMark').addEventListener('click', function () {
     if (!scan.running) return toast('Start the camera first');
     var r = scan.markCorner();
     toast(r.msg, r.ok ? 1800 : 4000);
-    if (r.ok && store.p.points.length >= 2) {
-      var d = scan.lastSpan();
-      if (d) $('scanMsg').innerHTML = 'Last wall measured <b>' + d.toFixed(3) + ' m</b>. Check it against a tape once — if it is off by a fixed %, redo <b>Calibrate…</b>';
-    }
+    RM.coach.render('scan');
   });
 
   $('btnCeil').addEventListener('click', function () {
     if (!scan.running) return toast('Start the camera first');
     var r = scan.measureHeightAtLast();
     toast(r.msg, r.ok ? 2200 : 4200);
+    RM.coach.render('scan');
   });
 
   $('btnUndoPt').addEventListener('click', function () {
@@ -3075,9 +3434,8 @@ window.RM = window.RM || {};
     var d = scan.grabFrame();
     if (!d) return toast('No frame');
     photo.setImage(d).then(function () {
-      photo.setMode('wall');
+      setPhotoMode('wall');
       setView('photo');
-      $('photoMsg').innerHTML = 'Tap the four corners of this wall in order <b>bottom-left, bottom-right, top-right, top-left</b>, then use <b>3 · Wall photo</b> to apply it as a texture.';
       toast('Frame sent to Photo tab');
     });
   });
@@ -3145,7 +3503,7 @@ window.RM = window.RM || {};
           if (a === b) return toast('Pick two different corners');
           scan.beginStation(a, b);
           closeSheet();
-          $('scanMsg').innerHTML = 'Aim at <b>corner ' + (a + 1) + '</b> and tap <b>Mark corner</b>, then at <b>corner ' + (b + 1) + '</b>.';
+          RM.coach.render('scan');
           toast('Re-sight corner ' + (a + 1) + ' first');
         };
       });
@@ -3195,14 +3553,10 @@ window.RM = window.RM || {};
     $('mRef').className = m === 'ref' ? 'blue' : '';
     $('mCorners').className = m === 'corners' ? 'blue' : '';
     $('mWall').className = m === 'wall' ? 'blue' : '';
-    var msg = {
-      ref: 'Step 2 — tap the reference object\'s corners in order: <b>A</b> near-left, <b>B</b> near-right, <b>C</b> far-right, <b>D</b> far-left. Drag to fine-tune with the loupe. A green 1 m grid appears when it solves.',
-      corners: 'Step 3 — tap each <b>floor corner</b> of the room, going round in order. Live wall lengths appear as you go. Then <b>Use corners as room</b>.',
-      wall: 'Wall photo — tap the wall\'s four corners: <b>BL, BR, TR, TL</b>. Then pick which wall it belongs to and it becomes a texture on the 3D model.'
-    }[m];
-    $('photoMsg').innerHTML = msg;
-    if (m === 'wall') applyWallUI();
+    RM.coach.render('photo');
+    if (m === 'wall' && photo.wallQuad.length === 4) applyWallUI();
   }
+
   $('mRef').addEventListener('click', function () { setPhotoMode('ref'); });
   $('mCorners').addEventListener('click', function () {
     if (!photo.H) return toast('Set the reference rectangle first (step 1)');
@@ -3211,14 +3565,7 @@ window.RM = window.RM || {};
   $('mWall').addEventListener('click', function () { setPhotoMode('wall'); });
   $('btnPhotoUndo').addEventListener('click', function () { photo.undoPoint(); });
 
-  photo.onchange = function () {
-    if (photo.mode === 'ref' && photo.H) {
-      var p = photo.precisionAt({ x: photo.img ? photo.img.width / 2 : 0, y: photo.img ? photo.img.height * 0.75 : 0 });
-      $('photoMsg').innerHTML = 'Reference solved — the green grid is 1 m squares. If it does not lie flat on the floor, drag the corners until it does.' +
-        (p ? ' Precision near the middle of the frame: <b>~' + p.toFixed(0) + ' mm per pixel</b>.' : '') +
-        '<br>Now tap <b>2 · Corners</b>.';
-    }
-  };
+  photo.onchange = function () { RM.coach.render('photo'); };
 
   $('btnUseRoom').addEventListener('click', function () {
     var w = photo.worldCorners();
@@ -3551,6 +3898,7 @@ window.RM = window.RM || {};
     if (view === '3d') rebuild3d();
     if (view === 'out' && what !== 'points') refreshOut();
     if (view === 'out' && what === 'points') refreshOut();
+    RM.coach.render(view);
   });
 
   window.addEventListener('resize', function () {
@@ -3571,10 +3919,6 @@ window.RM = window.RM || {};
   if (store.p.points.length) plan.fit();
   $('pOrtho').style.color = '#39d0a8';
 
-  if (!S.secure) {
-    $('scanMsg').innerHTML = '<b>This page is not on https://</b> — phone cameras and motion sensors are blocked here. ' +
-      'The <b>Photo</b> tab still works fully (it uses the normal camera app). See README to serve over https.';
-  }
 })();
 </script>
 </body>
