@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>RoomScan — measure a room, get a 3D model</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div id="top">
+  <div class="title" id="roomName">Room 1</div>
+  <div class="chip" id="areaChip">— m²</div>
+  <button id="btnUndo" class="ghost" title="Undo">↶</button>
+</div>
+
+<div id="main">
+
+  <!-- ============ SCAN ============ -->
+  <section class="view flex" id="v-scan">
+    <div class="stage">
+      <video id="vid" playsinline muted></video>
+      <canvas class="ov" id="scanOv"></canvas>
+      <div class="msg" id="scanMsg">Tap <b>Start camera</b>. Needs an <b>https://</b> page and motion-sensor permission — if that is not available, use the <b>Photo</b> tab instead.</div>
+      <div class="hud" id="scanHud"></div>
+    </div>
+    <div class="bar">
+      <button id="btnCam" class="primary">Start camera</button>
+      <button id="btnMark">Mark corner</button>
+      <button id="btnCeil">Ceiling ht</button>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0">
+      <button id="btnCalib">Calibrate…</button>
+      <button id="btnStation">New spot…</button>
+      <button id="btnGrab">Grab photo</button>
+      <button id="btnUndoPt">Undo pt</button>
+    </div>
+  </section>
+
+  <!-- ============ PHOTO ============ -->
+  <section class="view flex" id="v-photo">
+    <div class="stage">
+      <canvas class="ov" id="photoCv"></canvas>
+      <div class="msg" id="photoMsg">Step 1 — put a known object flat on the floor (A4 sheet, floor tile, tape square). Photograph the room corner so both the object and the floor corners are visible.</div>
+    </div>
+    <div class="bar">
+      <button id="btnPhotoTake" class="primary">Photo</button>
+      <select id="refPreset" style="flex:2">
+        <option value="0.297,0.210">A4 sheet — 297 × 210 mm</option>
+        <option value="0.420,0.297">A3 sheet — 420 × 297 mm</option>
+        <option value="0.600,0.600">Tile 600 × 600 mm</option>
+        <option value="0.400,0.400">Tile 400 × 400 mm</option>
+        <option value="0.300,0.300">Tile 300 × 300 mm</option>
+        <option value="1.000,1.000">Tape square 1 × 1 m</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0">
+      <button id="mRef" class="blue">1 · Reference</button>
+      <button id="mCorners">2 · Corners</button>
+      <button id="mWall">3 · Wall photo</button>
+      <button id="btnPhotoUndo">Undo pt</button>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0">
+      <button id="btnUseRoom" class="primary">Use corners as room</button>
+      <button id="btnAppendRoom">Append</button>
+    </div>
+  </section>
+
+  <!-- ============ PLAN ============ -->
+  <section class="view flex" id="v-plan">
+    <div id="planWrap">
+      <canvas id="planCv"></canvas>
+      <div class="planTools">
+        <button id="pFit" title="Fit">⤢</button>
+        <button id="pOrtho" title="Ortho snap">⌐</button>
+        <button id="pDel" title="Delete selected">🗑</button>
+      </div>
+      <div class="selInfo" id="selInfo" style="display:none"></div>
+    </div>
+    <div class="bar">
+      <button id="btnRect">Rectangle…</button>
+      <button id="btnReg">Square up</button>
+      <button id="btnOpening">Opening…</button>
+      <button id="btnClearPts" class="danger">Clear</button>
+    </div>
+  </section>
+
+  <!-- ============ 3D ============ -->
+  <section class="view flex" id="v-3d">
+    <div id="glWrap">
+      <canvas id="gl"></canvas>
+      <div class="glHud" id="glHud"></div>
+    </div>
+    <div class="toggles">
+      <label><input type="checkbox" id="tCeil"> Ceiling</label>
+      <label><input type="checkbox" id="tTex" checked> Photos</label>
+      <label><input type="checkbox" id="tEdge" checked> Edges</label>
+      <label><input type="checkbox" id="tGrid" checked> Grid</label>
+    </div>
+    <div class="bar">
+      <button id="g3Fit">Fit</button>
+      <button id="g3Top">Top</button>
+      <button id="g3In">Inside</button>
+      <button id="g3Shot">PNG</button>
+    </div>
+  </section>
+
+  <!-- ============ EXPORT / SETUP ============ -->
+  <section class="view" id="v-out">
+    <div class="pad">
+      <div class="card">
+        <h3>Room</h3>
+        <div class="grid2">
+          <div class="field"><label>Name</label><input id="fName" type="text"></div>
+          <div class="field"><label>Ceiling height (m)</label><input id="fHeight" type="number" step="0.005" min="1" max="12"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Display units</label>
+            <select id="fUnits"><option value="m">metres</option><option value="mm">millimetres</option><option value="ft">feet / inches</option></select>
+          </div>
+          <div class="field"><label>Phone height when scanning (m)</label><input id="fCamH" type="number" step="0.005" min="0.3" max="2.5"></div>
+        </div>
+        <div class="field"><label>Notes</label><textarea id="fNotes" rows="2"></textarea></div>
+      </div>
+
+      <div class="card">
+        <h3>Measured</h3>
+        <div class="stats" id="statBox"></div>
+        <div class="sep"></div>
+        <div style="overflow:auto"><table class="tbl" id="wallTbl"></table></div>
+      </div>
+
+      <div class="card">
+        <h3>Export</h3>
+        <div class="grid2">
+          <button id="xGLB" class="primary">3D model · GLB</button>
+          <button id="xOBJ">3D model · OBJ zip</button>
+          <button id="xSVG">Floor plan · SVG</button>
+          <button id="xCSV">Schedule · CSV</button>
+          <button id="xJSON">Project · JSON</button>
+          <button id="xLoad">Open project…</button>
+        </div>
+        <p class="hint">GLB opens in Windows 3D Viewer, Blender, SketchUp, Revit (via import), and phone AR viewers. OBJ zip carries the wall photos as textures.</p>
+      </div>
+
+      <div class="card">
+        <h3>Saved rooms</h3>
+        <div class="row"><input id="slotName" type="text" placeholder="Save as…"><button id="slotSave" class="blue">Save</button></div>
+        <div id="slotList" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <h3>How accurate is this?</h3>
+        <p class="hint" style="margin-top:0">This is single-view metrology, not lidar. Accuracy depends entirely on calibration and on how precisely you tap the corners.</p>
+        <ol class="steps">
+          <li><b>Photo mode</b> — typically ±1–3% within about 3 m of the reference object. Use the biggest reference you can and keep the room corners near it.</li>
+          <li><b>Scan mode</b> — typically ±2–5%, dominated by the phone-height and focal-length calibration and by compass drift.</li>
+          <li><b>Best practice</b> — tape-measure one or two walls, type those lengths into the plan and lock them, then hit <b>Square up</b>. The rest of the room is scaled and squared to the measurements you trust.</li>
+        </ol>
+      </div>
+
+      <div style="height:20px"></div>
+    </div>
+  </section>
+</div>
+
+<nav id="tabs">
+  <button data-v="scan"><svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/><circle cx="12" cy="12" r="3.2"/></svg>Scan</button>
+  <button data-v="photo"><svg viewBox="0 0 24 24"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>Photo</button>
+  <button data-v="plan"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3z"/><path d="M3 10h7V3M14 21v-7h7"/></svg>Plan</button>
+  <button data-v="3d"><svg viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></svg>3D</button>
+  <button data-v="out"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v3h16v-3"/></svg>Export</button>
+</nav>
+
+<!-- ============ sheets ============ -->
+<div class="sheet" id="sheet">
+  <div class="inner" id="sheetInner"></div>
+</div>
+
+<div id="toast"></div>
+
+<input type="file" id="photoFile" accept="image/*" capture="environment" hidden>
+<input type="file" id="jsonFile" accept="application/json,.json" hidden>
+
+<script src="js/mathx.js"></script>
+<script src="js/sensors.js"></script>
+<script src="js/store.js"></script>
+<script src="js/plan.js"></script>
+<script src="js/photo.js"></script>
+<script src="js/scan.js"></script>
+<script src="js/render3d.js"></script>
+<script src="js/exporters.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
