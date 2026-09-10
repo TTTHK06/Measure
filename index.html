@@ -251,6 +251,28 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
 .meter i{display:block;height:100%;background:var(--acc)}
 .meter i.warn{background:var(--warn)}
 .meter i.bad{background:var(--bad)}
+
+/* ---------- front door ---------- */
+.start{position:fixed;inset:0;z-index:90;background:var(--bg);overflow:auto;-webkit-overflow-scrolling:touch}
+.start[hidden]{display:none}
+.start .inner{max-width:34rem;margin:0 auto;padding:calc(22px + var(--sat)) 16px calc(22px + var(--sab))}
+.start .eyebrow{font:600 11px/1 ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--acc);margin:0 0 10px}
+.start h1{font-size:1.5rem;line-height:1.15;margin:0;letter-spacing:-.02em}
+.start .sub{color:var(--fg2);font-size:14px;margin:10px 0 18px}
+.start .route{
+  display:flex;flex-direction:column;gap:5px;width:100%;text-align:left;margin:0 0 10px;
+  padding:14px 15px;border-radius:14px;background:var(--bg2);border:1px solid var(--line)
+}
+.start .route:first-of-type{border-color:var(--acc);background:#12281f}
+.start .route .rt{font-weight:650;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.start .route .rt em{
+  font:600 9.5px/1 ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;font-style:normal;
+  background:var(--acc);color:#04211a;border-radius:99px;padding:3px 7px
+}
+.start .route .rd{font-size:13px;color:var(--fg2);line-height:1.45}
+.start .route .rd b{color:var(--fg)}
+.start .route .rn{font:11.5px/1.4 ui-monospace,monospace;color:var(--fg2);opacity:.75}
+.start .skip{width:100%;background:transparent;border:0;color:var(--fg2);font-size:13px;padding:14px 0 0}
 </style>
 </head>
 <body>
@@ -294,13 +316,25 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
     </div>
     <div class="bar">
       <button id="btnPhotoTake" class="primary">Photo</button>
+      <select id="refMode" style="flex:2">
+        <option value="room">Reference: the room itself</option>
+        <option value="object">Reference: an object I know</option>
+      </select>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0" id="roomRefBar">
+      <span class="tiles" style="flex:1">How long is edge <b>A&rarr;B</b>?
+        <input id="knownLen" type="number" step="0.005" min="0.05" placeholder="m" inputmode="decimal"></span>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0" id="objRefBar" hidden>
       <select id="refPreset" style="flex:2">
+        <option value="0.0856,0.05398">Bank card — 85.6 × 54.0 mm</option>
         <option value="0.297,0.210">A4 sheet — 297 × 210 mm</option>
         <option value="0.420,0.297">A3 sheet — 420 × 297 mm</option>
         <option value="0.600,0.600">Tile 600 × 600 mm</option>
         <option value="0.400,0.400">Tile 400 × 400 mm</option>
         <option value="0.300,0.300">Tile 300 × 300 mm</option>
         <option value="1.000,1.000">Tape square 1 × 1 m</option>
+        <option value="0.900,2.032">Door leaf — 900 × 2032 mm</option>
         <option value="custom">Custom…</option>
       </select>
       <span class="tiles"><input id="gCols" type="number" min="1" max="8" value="1" inputmode="numeric">
@@ -460,6 +494,40 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
 </nav>
 
 <!-- ============ sheets ============ -->
+<div class="start" id="start" hidden>
+  <div class="inner">
+    <p class="eyebrow">RoomScan</p>
+    <h1>How do you want to measure this room?</h1>
+    <p class="sub">All of these end up in the same place: a plan, a 3D model and a wall schedule. Pick whatever matches what you have on you.</p>
+
+    <button class="route" data-route="room">
+      <span class="rt">Photograph the room <em>recommended</em></span>
+      <span class="rd">Stand at an angle to the room, get all four floor corners in one shot, tap them, then type <b>one</b> wall length.</span>
+      <span class="rn">Needs: a tape, once &middot; no reference object &middot; no calibration</span>
+    </button>
+
+    <button class="route" data-route="object">
+      <span class="rt">Photograph with something I know</span>
+      <span class="rd">For odd-shaped rooms, or when you cannot get all four corners in one frame. Put a bank card, a sheet of A4 or a known tile on the floor.</span>
+      <span class="rn">Needs: an object whose size you know</span>
+    </button>
+
+    <button class="route" data-route="rect">
+      <span class="rt">Type the dimensions</span>
+      <span class="rd">Rectangular room and a tape in your hand? This is the fastest and the most accurate route there is.</span>
+      <span class="rn">Needs: a tape &middot; as accurate as your measuring</span>
+    </button>
+
+    <button class="route" data-route="scan">
+      <span class="rt">Live camera scan</span>
+      <span class="rd">Point at each corner where the wall meets the floor and mark it. No tape needed at all, but it must be calibrated once and it is the least accurate.</span>
+      <span class="rn">Needs: https, motion sensors, one calibration</span>
+    </button>
+
+    <button class="skip" id="startSkip">Skip &mdash; let me poke around</button>
+  </div>
+</div>
+
 <div class="sheet" id="sheet">
   <div class="inner" id="sheetInner"></div>
 </div>
@@ -644,6 +712,214 @@ window.RM = window.RM || {};
     return [A * id, (c * h - b * i) * id, (b * f - c * e) * id,
             B * id, (a * i - c * g) * id, (c * d - a * f) * id,
             C * id, (b * g - a * h) * id, (a * e - b * d) * id];
+  };
+
+  /* ---------------- vanishing points / metric rectification ----------------
+     A rectangle on the floor gives two vanishing points. Those fix the horizon and say
+     the two directions are perpendicular, but that is one constraint short of fixing the
+     aspect ratio - two vanishing points alone rectify a rectangle to a rectangle of the
+     WRONG proportions. The missing constraint is the camera's focal length, which this
+     app already calibrates. With f known, two perpendicular vanishing points give the
+     floor plane's orientation, and a single measured length makes it metric - so the
+     reference can be the room's own corners plus one tape reading. */
+
+  M.lineThrough = function (p, q) {              // homogeneous line through two points
+    return [p.y - q.y, q.x - p.x, p.x * q.y - q.x * p.y];
+  };
+
+  M.cross3 = function (a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  };
+
+  /* Intersection of N >= 2 lines in the least-squares sense: the null vector of
+     sum(l l^T), found by fixing each component in turn and keeping the best residual. */
+  M.intersectLines = function (lines) {
+    if (!lines || lines.length < 2) return null;
+    var S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], i, r, c;
+    for (i = 0; i < lines.length; i++) {
+      var l = lines[i], nrm = Math.hypot(l[0], l[1]) || 1;
+      var u = [l[0] / nrm, l[1] / nrm, l[2] / nrm];
+      for (r = 0; r < 3; r++) for (c = 0; c < 3; c++) S[r][c] += u[r] * u[c];
+    }
+    var best = null;
+    for (var k = 0; k < 3; k++) {
+      var A2 = [], b2 = [];
+      for (r = 0; r < 3; r++) {
+        if (r === k) continue;
+        var row = [];
+        for (c = 0; c < 3; c++) if (c !== k) row.push(S[r][c]);
+        A2.push(row);
+        b2.push(-S[r][k]);
+      }
+      var sol = M.solve(A2, b2);
+      if (!sol) continue;
+      var v = [], j = 0, ok = true;
+      for (c = 0; c < 3; c++) {
+        if (c === k) v.push(1);
+        else { v.push(sol[j]); if (!isFinite(sol[j])) ok = false; j++; }
+      }
+      if (!ok) continue;
+      var res = 0;
+      for (r = 0; r < 3; r++) {
+        var s2 = 0;
+        for (c = 0; c < 3; c++) s2 += S[r][c] * v[c];
+        res += s2 * s2;
+      }
+      var nv = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+      res /= nv;
+      if (!best || res < best.res) best = { res: res, v: v };
+    }
+    return best ? best.v : null;
+  };
+
+  /* Homography from image to floor plane, from two orthogonal vanishing points.
+     Result is shape-correct and axis-aligned, at an arbitrary scale. */
+  M.floorFromVPs = function (v1, v2) {
+    if (!v1 || !v2) return null;
+    var l = M.cross3(v1, v2);                    // the horizon
+    var ln = Math.hypot(l[0], l[1], l[2]);
+    if (!isFinite(ln) || ln < 1e-12) return null;
+    l = [l[0] / ln, l[1] / ln, l[2] / ln];
+    /* send the horizon to the line at infinity */
+    var Hp = [1, 0, 0, 0, 1, 0, l[0], l[1], l[2]];
+    /* the two vanishing points become directions; make them the axes */
+    var d1 = [v1[0], v1[1]], d2 = [v2[0], v2[1]];
+    var det = d1[0] * d2[1] - d1[1] * d2[0];
+    if (!isFinite(det) || Math.abs(det) < 1e-12) return null;
+    var A = [d2[1] / det, -d2[0] / det, -d1[1] / det, d1[0] / det];
+    var H = M.mul3([A[0], A[1], 0, A[2], A[3], 0, 0, 0, 1], Hp);
+    for (var i = 0; i < 9; i++) if (!isFinite(H[i])) return null;
+    return H;
+  };
+
+  function norm3(v) {
+    var l = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / l, v[1] / l, v[2] / l];
+  }
+  function dot3(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+  /* Camera-frame direction of the world lines that meet at an image vanishing point.
+     Image y runs down, the camera looks along -z. */
+  M.dirFromVP = function (v, cam) {
+    var cx = cam.W / 2, cy = cam.H / 2;
+    if (Math.abs(v[2]) < 1e-12) {
+      /* vanishing point at infinity in the image: direction parallel to the sensor */
+      return norm3([v[0], -v[1], 0]);
+    }
+    var x = v[0] / v[2], y = v[1] / v[2];
+    return norm3([x - cx, -(y - cy), -cam.f]);
+  };
+
+  /* Focal length from two perpendicular vanishing points, in closed form.
+     The two directions are perpendicular, so with the principal point at the image
+     centre: (v1-c).(v2-c) + f^2 = 0. Needs both vanishing points finite - shoot the
+     rectangle square-on and one runs to infinity, leaving f undetermined. */
+  M.focalFromVPs = function (v1, v2, W, H) {
+    if (!v1 || !v2 || Math.abs(v1[2]) < 1e-12 || Math.abs(v2[2]) < 1e-12) return null;
+    var cx = W / 2, cy = H / 2;
+    var a = { x: v1[0] / v1[2] - cx, y: v1[1] / v1[2] - cy };
+    var b = { x: v2[0] / v2[2] - cx, y: v2[1] / v2[2] - cy };
+    var d = a.x * b.x + a.y * b.y;
+    if (!(d < 0)) return null;                   // no real solution: too square-on, or not a rectangle
+    var f = Math.sqrt(-d);
+    if (!isFinite(f) || f < 0.15 * Math.max(W, H) || f > 8 * Math.max(W, H)) return null;
+    return f;
+  };
+
+  /* Metric floor map from four image points that form a rectangle in the real world.
+     cam = {W,H,f} supplies the focal length; `known` is the true length of the p0->p1
+     edge. The p1->p2 edge is then DERIVED, which doubles as an accuracy check whenever
+     you happen to know it too. Returns the map plus an orthogonality residual, which is
+     an independent check on the focal calibration: if f is wrong, two edges that really
+     are perpendicular will not come out perpendicular. */
+  M.floorFromRect4 = function (q, known, cam0) {
+    if (!q || q.length < 4 || !cam0) return null;
+    var v1 = M.intersectLines([M.lineThrough(q[0], q[1]), M.lineThrough(q[3], q[2])]);
+    var v2 = M.intersectLines([M.lineThrough(q[1], q[2]), M.lineThrough(q[0], q[3])]);
+    if (!v1 || !v2) return null;
+
+    /* prefer the focal length the geometry itself gives us; fall back to calibration */
+    var fSelf = M.focalFromVPs(v1, v2, cam0.W, cam0.H);
+    var cam = { W: cam0.W, H: cam0.H, f: fSelf || cam0.f };
+    if (!(cam.f > 0)) return null;
+
+    var d1 = M.dirFromVP(v1, cam), d2 = M.dirFromVP(v2, cam);
+    var c12 = dot3(d1, d2);
+    var orthoDeg = Math.abs(90 - Math.acos(M.clamp(Math.abs(c12), -1, 1)) * M.RAD);
+
+    /* force perpendicularity, splitting the correction between the two directions */
+    var e1 = norm3([d1[0] - 0.5 * c12 * d2[0], d1[1] - 0.5 * c12 * d2[1], d1[2] - 0.5 * c12 * d2[2]]);
+    var e2 = norm3([d2[0] - 0.5 * c12 * d1[0], d2[1] - 0.5 * c12 * d1[1], d2[2] - 0.5 * c12 * d1[2]]);
+    var n = norm3(M.cross3(e1, e2));
+
+    /* pixel -> camera ray, as a linear map on homogeneous image coordinates */
+    var cx = cam.W / 2, cy = cam.H / 2;
+    var K = [1, 0, -cx, 0, -1, cy, 0, 0, -cam.f];
+
+    /* put the plane through the centroid ray so every tapped point intersects it */
+    var mid = { x: (q[0].x + q[1].x + q[2].x + q[3].x) / 4, y: (q[0].y + q[1].y + q[2].y + q[3].y) / 4 };
+    var rm = [K[0] * mid.x + K[1] * mid.y + K[2], K[3] * mid.x + K[4] * mid.y + K[5], K[6] * mid.x + K[7] * mid.y + K[8]];
+    var cPlane = dot3(n, rm);
+    if (!isFinite(cPlane) || Math.abs(cPlane) < 1e-12) return null;
+
+    /* u = c (e1.Kp)/(n.Kp),  v = c (e2.Kp)/(n.Kp) */
+    function rowOf(e, sc) {
+      return [
+        sc * (e[0] * K[0] + e[1] * K[3] + e[2] * K[6]),
+        sc * (e[0] * K[1] + e[1] * K[4] + e[2] * K[7]),
+        sc * (e[0] * K[2] + e[1] * K[5] + e[2] * K[8])
+      ];
+    }
+    var r1 = rowOf(e1, cPlane), r2 = rowOf(e2, cPlane), r3 = rowOf(n, 1);
+    var H = [r1[0], r1[1], r1[2], r2[0], r2[1], r2[2], r3[0], r3[1], r3[2]];
+
+    var w = q.map(function (pp) { return M.applyH(H, pp); });
+    if (w.some(function (pp) { return !pp; })) return null;
+
+    /* Image y runs down, so a correct floor map REVERSES signed area: tapping the
+       rectangle consistently must come out anticlockwise in plan coordinates.
+       Coming out clockwise means the plan is mirrored. */
+    if (M.signedArea(w) < 0) {
+      H = M.mul3([1, 0, 0, 0, -1, 0, 0, 0, 1], H);
+      w = q.map(function (pp) { return M.applyH(H, pp); });
+      if (w.some(function (pp) { return !pp; })) return null;
+    }
+
+    var side1 = M.dist(w[0], w[1]), side2 = M.dist(w[1], w[2]);
+    if (!(side1 > 1e-9) || !(side2 > 1e-9)) return null;
+
+    /* p0->p1 along +x, scaled to the measured length, origin at p0 */
+    var ang = -Math.atan2(w[1].y - w[0].y, w[1].x - w[0].x);
+    var ca = Math.cos(ang), sa = Math.sin(ang);
+    H = M.mul3([ca, -sa, 0, sa, ca, 0, 0, 0, 1], H);
+    var sc2 = (known > 0) ? known / side1 : 1;
+    H = M.mul3([sc2, 0, 0, 0, sc2, 0, 0, 0, 1], H);
+    var o = M.applyH(H, q[0]);
+    if (!o) return null;
+    H = M.mul3([1, 0, -o.x, 0, 1, -o.y, 0, 0, 1], H);
+
+    /* The orthogonality residual only reveals a wrong focal length when BOTH vanishing
+       points are finite. Shoot a rectangle square-on and one of them runs off to
+       infinity, where the residual is identically zero whatever f is - so say when the
+       check cannot see anything rather than implying f has been confirmed. */
+    function vpFinite(v) {
+      var scale = Math.hypot(v[0], v[1]) || 1;
+      return Math.abs(v[2]) / scale > 1 / (8 * Math.max(cam.W, cam.H));
+    }
+    var checkable = vpFinite(v1) && vpFinite(v2);
+
+    return {
+      H: H,
+      aspect: side2 / side1,
+      side1: known > 0 ? known : side1,
+      side2: (known > 0 ? known : side1) * (side2 / side1),
+      orthoDeg: orthoDeg,
+      checkable: checkable,
+      focal: cam.f,
+      focalSelfSolved: !!fSelf,
+      focalRel: cam.f / Math.max(cam.W, cam.H),
+      v1: v1, v2: v2
+    };
   };
 
   /* ---------------- radial lens distortion ----------------
@@ -2210,6 +2486,9 @@ window.RM = window.RM || {};
     mode: 'ref',            // 'ref' | 'corners' | 'wall'
     ref: [],                // 4 image-space points of the known rectangle
     refW: 0.297, refH: 0.210,
+    refMode: 'room',               // 'room' = 4 floor corners + one measured wall
+    known1: 0,                     // that measured length (A->B), metres
+    vp: null,                      // vanishing-point solution + quality
     cols: 1, rows: 1,              // reference is an m x n block of identical tiles
     gray: null,                    // cached grayscale for sub-pixel refinement
     autoRefine: true,
@@ -2449,32 +2728,67 @@ window.RM = window.RM || {};
   };
 
   /* ---------- metrology ---------- */
+  photo.cam = function () {
+    if (!photo.img) return null;
+    var W = photo.img.width, H = photo.img.height;
+    return { W: W, H: H, f: (store.p.calib.fRel || 0.75) * Math.max(W, H) };
+  };
+
   photo.solve = function () {
-    if (photo.ref.length !== 4) { photo.H = null; photo.fit = null; return null; }
+    photo.fit = null; photo.vp = null;
+    if (photo.ref.length !== 4) { photo.H = null; return null; }
     var lens = photo.lens();
+    var und = photo.ref.map(function (p) { return lens ? M.undistort(p, lens) : p; });
+
+    /* --- the room's own corners, plus one measured length --- */
+    if (photo.refMode === 'room') {
+      if (!(photo.known1 > 0)) { photo.H = null; return null; }
+      var r = M.floorFromRect4(und, photo.known1, photo.cam());
+      if (!r) { photo.H = null; return null; }
+      photo.vp = r;
+      photo.H = r.H;
+      return photo.H;
+    }
+
+    /* --- an object whose width and depth are both known --- */
     var cols = Math.max(1, photo.cols | 0), rows = Math.max(1, photo.rows | 0);
     var Wm = photo.refW * cols, Hm = photo.refH * rows;
-    var und = photo.ref.map(function (p) { return lens ? M.undistort(p, lens) : p; });
     var dst = [{ x: 0, y: 0 }, { x: Wm, y: 0 }, { x: Wm, y: Hm }, { x: 0, y: Hm }];
     var H = M.homography(und, dst);
-    photo.fit = null;
     if (!H) { photo.H = null; return null; }
 
-    /* every interior tile joint is a free extra measurement — find and use them */
+    /* every interior tile joint is a free extra measurement - find and use them */
     if ((cols > 1 || rows > 1) && photo.gray && RM.refine) {
       var g = RM.refine.gridNodes(photo.gray, H, cols, rows, photo.refW, photo.refH, lens);
       if (g.found >= 4) {
         var undG = g.src.map(function (p) { return lens ? M.undistort(p, lens) : p; });
         var H2 = M.homography(undG, g.dst);
         if (H2) {
-          var rms = RM.refine.rms(H2, undG, g.dst);
-          photo.fit = { n: g.found, tried: g.tried, rms: rms, medianMove: g.medianMove };
+          photo.fit = { n: g.found, tried: g.tried, rms: RM.refine.rms(H2, undG, g.dst), medianMove: g.medianMove };
           H = H2;
         }
       }
     }
     photo.H = H;
     return photo.H;
+  };
+
+  /* in room mode the four reference taps ARE the room outline */
+  photo.useRefAsRoom = function () {
+    if (photo.refMode !== 'room' || photo.ref.length !== 4) return false;
+    photo.corners = photo.ref.map(function (p) { return { x: p.x, y: p.y }; });
+    emit();
+    return true;
+  };
+
+  /* adopt the focal length the geometry worked out for itself */
+  photo.adoptFocal = function () {
+    if (!photo.vp || !photo.vp.focalSelfSolved) return null;
+    store.p.calib.fRel = M.round(photo.vp.focalRel, 5);
+    store.p.calib.verified = true;
+    store.p.calib.fovDeg = M.round(2 * Math.atan(0.5 / photo.vp.focalRel) * M.RAD, 1);
+    store.emit('calib');
+    return store.p.calib.fovDeg;
   };
 
   photo.world = function (imgPt) {
@@ -4140,18 +4454,51 @@ window.RM = window.RM || {};
                why: 'Bottom-left, bottom-right, top-right, top-left. Then pick which wall it is and the photo is straightened onto it.' };
     }
     if (!photo.img) {
+      if (photo.refMode === 'room') {
+        return { step: 1, total: 5, act: 'Stand at an angle to the room, then tap Photo',
+                 why: 'Get all four floor corners into one frame. Shoot from a corner rather than square-on to a wall &mdash; ' +
+                      'at an angle the geometry can work out your camera by itself, and you need nothing on the floor at all.' };
+      }
       return { step: 1, total: 5, act: 'Put a known object on the floor, then tap Photo',
-               why: 'A4 sheet, floor tile, or a 1 m square of tape &mdash; flat on the floor, near the corners you care about. Shoot so the object and the floor corners are both in frame.' };
+               why: 'A bank card, a sheet of A4, or a known tile &mdash; flat on the floor, near the corners you care about. Shoot so the object and the floor corners are both in frame.' };
     }
+    var roomRef = photo.refMode === 'room';
     if (photo.ref.length < 4) {
-      var next = ['A &mdash; near-left', 'B &mdash; near-right', 'C &mdash; far-right', 'D &mdash; far-left'][photo.ref.length];
-      return { step: 2, total: 5, act: 'Tap the object&rsquo;s corner ' + next,
-               why: 'Going round in this order keeps the plan the right way round. Drag a marker to fine-tune &mdash; a magnifier appears while you drag. ' +
-                    photo.ref.length + ' of 4 placed.' };
+      var next = roomRef
+        ? ['A &mdash; the nearest corner on your left', 'B &mdash; the nearest corner on your right',
+           'C &mdash; the far corner on your right', 'D &mdash; the far corner on your left'][photo.ref.length]
+        : ['A &mdash; near-left', 'B &mdash; near-right', 'C &mdash; far-right', 'D &mdash; far-left'][photo.ref.length];
+      return { step: 2, total: 5, act: 'Tap ' + next,
+               why: (roomRef
+                 ? 'Going round the room in order. Anything rectangular on the floor works if you cannot see all four room corners. '
+                 : 'Going round in this order keeps the plan the right way round. ') +
+                 'Drag a marker to fine-tune &mdash; a magnifier appears while you drag. ' +
+                 photo.ref.length + ' of 4 placed.' };
     }
-    if (!photo.H) {
-      return { step: 2, total: 5, act: 'Those four points don&rsquo;t solve',
-               why: 'Two corners may be on top of each other, or in a line. Drag them back onto the object&rsquo;s actual corners.', tone: 'stop' };
+    if (roomRef && !(photo.known1 > 0)) {
+      return { step: 3, total: 5, act: 'Type the length of edge A&rarr;B',
+               why: 'One tape measurement is all it needs. The other side is worked out from the geometry, ' +
+                    'so if you happen to know it too you get a free accuracy check.', tone: 'warn' };
+    }
+    if (roomRef && photo.H && photo.vp) {
+      var v = photo.vp;
+      var warn = null;
+      if (!v.focalSelfSolved) {
+        warn = 'Shot too square-on to work out the lens by itself, so it is using the stored calibration' +
+               (store.p.calib.verified ? '' : ' &mdash; which has never been checked on this phone') +
+               '. Retake it standing at an angle to the room and it becomes self-solving.';
+      } else if (v.checkable && v.orthoDeg > 2) {
+        warn = 'Those four corners are ' + v.orthoDeg.toFixed(1) + '&deg; off square. If the room really is square, ' +
+               'the taps are off; if it genuinely is not, use the known-object reference instead.';
+      }
+      return { step: 4, total: 5,
+               act: 'Other side works out at ' + RM.plan.fmt(v.side2),
+               why: (v.focalSelfSolved
+                 ? 'Taken at an angle, so the geometry solved the camera itself &mdash; no reference object and no calibration needed. '
+                 : '') +
+                 'Check that figure against the room: if it is right, the whole plan is right. ' +
+                 'Then press <b>Use corners as room</b>.',
+               warn: warn, done: !warn };
     }
     if (photo.mode === 'ref') {
       var pr = photo.precisionAt({ x: photo.img.width / 2, y: photo.img.height * 0.75 });
@@ -4438,6 +4785,45 @@ window.RM = window.RM || {};
     });
   }
 
+  /* ---------------- front door ----------------
+     The app used to open on the Scan tab, which is the one route that needs https,
+     sensors and a calibration before it can measure anything. Now it asks the only
+     question that matters first, and sets the app up for the answer. */
+  var START_SEEN = 'roomscan.started.v1';
+
+  function openStart() { $('start').hidden = false; }
+  function closeStart() {
+    $('start').hidden = true;
+    try { localStorage.setItem(START_SEEN, '1'); } catch (e) {}
+  }
+  window.RMopenStart = openStart;
+
+  Array.prototype.forEach.call(document.querySelectorAll('.start .route'), function (b) {
+    b.addEventListener('click', function () {
+      var r = b.dataset.route;
+      closeStart();
+      if (r === 'room' || r === 'object') {
+        photo.refMode = (r === 'room') ? 'room' : 'object';
+        applyRefMode();
+        setPhotoMode('ref');
+        setView('photo');
+        if (!photo.img) $('photoFile').click();
+      } else if (r === 'rect') {
+        setView('plan');
+        $('btnRect').click();
+      } else if (r === 'scan') {
+        setView('scan');
+        if (!store.p.calib.verified) {
+          toast('Scan needs calibrating once before it can measure \u2014 tap Calibrate\u2026', 5000);
+        }
+      }
+    });
+  });
+  $('startSkip').addEventListener('click', function () {
+    closeStart();
+    setView(store.p.points.length >= 3 ? 'plan' : 'photo');
+  });
+
   /* ---------------- help sheet ---------------- */
   $('btnHelp').addEventListener('click', function () {
     sheet(
@@ -4461,7 +4847,11 @@ window.RM = window.RM || {};
       '<p class="hint" style="margin-top:0">No reference object handy? <b>Scan</b> tab measures with the phone&rsquo;s tilt sensors instead, but needs calibrating once (Calibrate&hellip; &rarr; method A) and an https:// page. ' +
       'Plain rectangular room and a tape? <b>Plan &rarr; Rectangle&hellip;</b> is the fastest accurate route of all.</p>' +
       '<p class="hint">Accuracy: photo &plusmn;1&ndash;3%, scan &plusmn;2&ndash;5%, tape-locked walls as good as your tape. Check one wall against a tape on a new phone.</p>' +
-      '<button style="width:100%;margin-top:10px" onclick="RMcloseSheet()">Close</button>'
+      '<button style="width:100%;margin-top:10px" id="hStart">Choose a different method\u2026</button>' +
+      '<button style="width:100%;margin-top:8px" onclick="RMcloseSheet()">Close</button>',
+      function () {
+        $('hStart').onclick = function () { closeSheet(); openStart(); };
+      }
     );
   });
 
@@ -4639,6 +5029,30 @@ window.RM = window.RM || {};
     e.target.value = '';
   });
 
+  function applyRefMode() {
+    var m = photo.refMode;
+    $('refMode').value = m;
+    $('roomRefBar').hidden = m !== 'room';
+    $('objRefBar').hidden = m === 'room';
+    photo.solve();
+    photo.draw();
+    RM.coach.render('photo');
+  }
+  $('refMode').addEventListener('change', function () {
+    photo.refMode = this.value;
+    applyRefMode();
+    toast(this.value === 'room'
+      ? 'Tap the room\u2019s four floor corners, then type one wall length'
+      : 'Tap the four corners of your reference object', 4000);
+  });
+  $('knownLen').addEventListener('input', function () {
+    var v = parseFloat(this.value);
+    photo.known1 = (isFinite(v) && v > 0) ? v : 0;
+    photo.solve();
+    photo.draw();
+    RM.coach.render('photo');
+  });
+
   $('refPreset').addEventListener('change', function () {
     var v = this.value;
     if (v === 'custom') {
@@ -4712,9 +5126,31 @@ window.RM = window.RM || {};
   $('gRows').addEventListener('change', readTiles);
   $('btnPhotoUndo').addEventListener('click', function () { photo.undoPoint(); });
 
-  photo.onchange = function () { RM.coach.render('photo'); };
+  photo.onchange = function () {
+    RM.coach.render('photo');
+    /* a shot taken at an angle works out the camera's focal length on its own; if the
+       phone has never been calibrated, that is worth keeping for scan mode too */
+    var v = photo.vp;
+    if (v && v.focalSelfSolved && !store.p.calib.verified && !photo._askedFocal) {
+      photo._askedFocal = true;
+      sheet('<h2>Camera worked out</h2>' +
+        '<div class="okbox">This photo was taken at an angle, so the geometry gave up the camera\u2019s focal length by itself: ' +
+        'about <b>' + (2 * Math.atan(0.5 / v.focalRel) * M.RAD).toFixed(0) + '\u00b0</b> horizontal field of view.</div>' +
+        '<p class="hint">Keep it and the <b>Scan</b> tab is calibrated too, and square-on photos will have a focal length to fall back on. ' +
+        'It costs nothing to keep and can be redone any time.</p>' +
+        '<div class="row"><button class="grow" onclick="RMcloseSheet()">No thanks</button>' +
+        '<button class="grow primary" id="fkOk">Keep it</button></div>', function () {
+          $('fkOk').onclick = function () {
+            var fov = photo.adoptFocal();
+            closeSheet();
+            toast(fov ? 'Calibrated: ' + fov + '\u00b0 field of view' : 'Could not keep it', 3500);
+          };
+        });
+    }
+  };
 
   $('btnUseRoom').addEventListener('click', function () {
+    if (photo.refMode === 'room' && !photo.corners.length) photo.useRefAsRoom();
     var w = photo.worldCorners();
     if (w.length < 3) return toast('Tap at least 3 room corners in step 2');
     store.setPoints(w, 'photo');
@@ -5153,9 +5589,13 @@ window.RM = window.RM || {};
   store.loadLocal();
   store.syncWalls();
   refreshTop();
-  setView(store.p.points.length >= 3 ? 'plan' : 'scan');
+  var seenStart = false;
+  try { seenStart = localStorage.getItem(START_SEEN) === '1'; } catch (e) {}
+  setView(store.p.points.length >= 3 ? 'plan' : 'photo');
+  if (!seenStart && store.p.points.length < 3 && !store.slots().length) openStart();
   if (store.p.points.length) plan.fit();
   $('pOrtho').style.color = '#39d0a8';
+  applyRefMode();
 
 })();
 </script>
