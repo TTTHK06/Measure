@@ -8,6 +8,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>RoomScan — measure a room, get a 3D model</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <style>
 /* css/app.css */
 :root{
@@ -212,6 +215,11 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
   background:var(--bg3);border:1px solid var(--line);border-radius:99px;padding:3px 6px
 }
 .coach .cact,.stage .msg .cact{padding-right:44px}
+
+/* tile-count control in the reference row */
+.tiles{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--fg2);white-space:nowrap}
+.tiles input{width:42px;padding:8px 4px;text-align:center}
+.tiles b{color:var(--fg2)}
 </style>
 </head>
 <body>
@@ -264,16 +272,30 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
         <option value="1.000,1.000">Tape square 1 × 1 m</option>
         <option value="custom">Custom…</option>
       </select>
+      <span class="tiles"><input id="gCols" type="number" min="1" max="8" value="1" inputmode="numeric">
+      <b>×</b><input id="gRows" type="number" min="1" max="8" value="1" inputmode="numeric"> tiles</span>
     </div>
     <div class="bar" style="border-top:0;padding-top:0">
       <button id="mRef" class="blue">1 · Reference</button>
       <button id="mCorners">2 · Corners</button>
       <button id="mWall">3 · Wall photo</button>
-      <button id="btnPhotoUndo">Undo pt</button>
+      <button id="mLens">Lens…</button>
     </div>
-    <div class="bar" style="border-top:0;padding-top:0">
+    <div class="bar" style="border-top:0;padding-top:0" id="photoActions">
       <button id="btnUseRoom" class="primary">Use corners as room</button>
       <button id="btnAppendRoom">Append</button>
+      <button id="btnPhotoUndo">Undo pt</button>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0" id="measureActions" hidden>
+      <button id="btnMeasDoor" class="primary">+ Door here</button>
+      <button id="btnMeasWin" class="blue">+ Window here</button>
+      <button id="btnMeasClear">Clear</button>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:0" id="lensActions" hidden>
+      <button id="btnLensLine" class="blue">+ Next edge</button>
+      <button id="btnLensSolve" class="primary">Solve lens</button>
+      <button id="btnLensClear">Clear</button>
+      <button id="btnPhotoUndo2">Undo pt</button>
     </div>
   </section>
 
@@ -309,6 +331,7 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
       <label><input type="checkbox" id="tTex" checked> Photos</label>
       <label><input type="checkbox" id="tEdge" checked> Edges</label>
       <label><input type="checkbox" id="tGrid" checked> Grid</label>
+      <label><input type="checkbox" id="tVoid" checked> Void</label>
     </div>
     <div class="bar">
       <button id="g3Fit">Fit</button>
@@ -334,6 +357,11 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
           </div>
           <div class="field"><label>Phone height when scanning (m)</label><input id="fCamH" type="number" step="0.005" min="0.3" max="2.5"></div>
         </div>
+        <div class="grid2">
+          <div class="field"><label>Wall thickness (m)</label><input id="fThick" type="number" step="0.005" min="0" max="1" placeholder="0 = single line"></div>
+          <div class="field"><label>Ceiling void to slab (m)</label><input id="fVoid" type="number" step="0.005" min="0" max="4" placeholder="0 = none"></div>
+        </div>
+        <p class="hint" style="margin-top:0">The plan is the <b>internal face</b>. A thickness pushes a structural shell outwards from it and gives real reveals at openings. The void is finished ceiling up to slab soffit &mdash; what you have to route services through.</p>
         <div class="field"><label>Notes</label><textarea id="fNotes" rows="2"></textarea></div>
       </div>
 
@@ -355,6 +383,11 @@ table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-
           <button id="xLoad">Open project…</button>
         </div>
         <p class="hint">GLB opens in Windows 3D Viewer, Blender, SketchUp, Revit (via import), and phone AR viewers. OBJ zip carries the wall photos as textures.</p>
+      </div>
+
+      <div class="card">
+        <h3>Offline &amp; install</h3>
+        <div id="offlineBox"></div>
       </div>
 
       <div class="card">
@@ -463,28 +496,50 @@ window.RM = window.RM || {};
     };
   }
 
-  /* src: 4 image points {x,y}; dst: 4 target points {x,y}. Returns row-major 9-array.
-     Solves the homogeneous 8x9 system without assuming h33 = 1 — that assumption fails
+  /* src/dst: N >= 4 corresponding points {x,y}. Returns row-major 9-array.
+     Solves the homogeneous 2Nx9 system without assuming h33 = 1 — that assumption fails
      whenever the plane's horizon passes through the image origin, which a symmetric
-     reference quad does exactly. */
+     reference quad does exactly. N > 4 is solved by least squares, so extra points
+     average out tapping noise (error falls as 1/sqrt(N)). */
   M.homography = function (src, dst) {
-    if (!src || !dst || src.length < 4 || dst.length < 4) return null;
-    var S = normalize(src.slice(0, 4)), D = normalize(dst.slice(0, 4));
+    if (!src || !dst) return null;
+    var n = Math.min(src.length, dst.length);
+    if (n < 4) return null;
+    var S = normalize(src.slice(0, n)), D = normalize(dst.slice(0, n));
     var A = [], i;
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < n; i++) {
       var x = S.pts[i].x, y = S.pts[i].y, X = D.pts[i].x, Y = D.pts[i].y;
       A.push([-x, -y, -1, 0, 0, 0, x * X, y * X, X]);
       A.push([0, 0, 0, -x, -y, -1, x * Y, y * Y, Y]);
     }
+    var rows = A.length;
     /* nullspace by elimination: fix each unknown to 1 in turn, keep the best residual */
     var best = null;
     for (var k = 0; k < 9; k++) {
-      var M8 = [], b8 = [], r, c;
-      for (r = 0; r < 8; r++) {
+      var Mk = [], bk = [], r, c;
+      for (r = 0; r < rows; r++) {
         var row = [];
         for (c = 0; c < 9; c++) if (c !== k) row.push(A[r][c]);
-        M8.push(row);
-        b8.push(-A[r][k]);
+        Mk.push(row);
+        bk.push(-A[r][k]);
+      }
+      var M8, b8;
+      if (rows === 8) { M8 = Mk; b8 = bk; }
+      else {
+        /* normal equations for the overdetermined case */
+        M8 = []; b8 = [];
+        for (var a = 0; a < 8; a++) {
+          var nr = [];
+          for (var b2 = 0; b2 < 8; b2++) {
+            var s2 = 0;
+            for (r = 0; r < rows; r++) s2 += Mk[r][a] * Mk[r][b2];
+            nr.push(s2);
+          }
+          M8.push(nr);
+          var sb = 0;
+          for (r = 0; r < rows; r++) sb += Mk[r][a] * bk[r];
+          b8.push(sb);
+        }
       }
       var sol = M.solve(M8, b8);
       if (!sol) continue;
@@ -495,16 +550,34 @@ window.RM = window.RM || {};
       }
       if (!ok) continue;
       var res = 0, norm = 0;
-      for (r = 0; r < 8; r++) {
+      for (r = 0; r < rows; r++) {
         var v = 0;
         for (c = 0; c < 9; c++) v += A[r][c] * h[c];
         res += v * v;
       }
+      res /= rows;
       for (c = 0; c < 9; c++) norm += h[c] * h[c];
       res /= norm;                                  // scale-invariant residual
       if (!best || res < best.res) best = { res: res, h: h };
     }
-    if (!best || best.res > 1e-8) return null;
+    if (!best) return null;
+
+    /* Accept on reprojection error, not on the algebraic residual: an overdetermined
+       fit never drives the residual to zero, and a degenerate configuration can drive
+       it to zero while producing a homography that maps nothing correctly. */
+    var hn = best.h, err = 0, ok2 = 0;
+    for (i = 0; i < n; i++) {
+      var q = M.applyH(hn, S.pts[i]);
+      if (!q) { err = Infinity; break; }
+      err += Math.hypot(q.x - D.pts[i].x, q.y - D.pts[i].y);
+      ok2++;
+    }
+    err = ok2 ? err / ok2 : Infinity;
+    var detn = hn[0] * (hn[4] * hn[8] - hn[5] * hn[7]) -
+               hn[1] * (hn[3] * hn[8] - hn[5] * hn[6]) +
+               hn[2] * (hn[3] * hn[7] - hn[4] * hn[6]);
+    /* points are normalised to ~sqrt(2) from the origin, so 0.05 is a loose but real bound */
+    if (!isFinite(err) || err > 0.05 || Math.abs(detn) < 1e-10) return null;
 
     /* undo the normalization: H = Tdst^-1 * Hn * Tsrc */
     var H = M.mul3(M.mul3(D.Tinv, best.h), S.T);
@@ -530,6 +603,87 @@ window.RM = window.RM || {};
     return [A * id, (c * h - b * i) * id, (b * f - c * e) * id,
             B * id, (a * i - c * g) * id, (c * d - a * f) * id,
             C * id, (b * g - a * h) * id, (a * e - b * d) * id];
+  };
+
+  /* ---------------- radial lens distortion ----------------
+     Single-coefficient model. Radius is normalised by HALF THE IMAGE DIAGONAL, so k1 is
+     unitless and needs no focal length — which matters because photo mode never knows one.
+     lens = {k1, W, H}. k1 < 0 is barrel (the usual phone wide-angle). */
+  function lensGeom(lens) {
+    var W = lens.W, H = lens.H;
+    return { cx: W / 2, cy: H / 2, R: Math.hypot(W, H) / 2 };
+  }
+
+  /* ideal (pinhole) point -> where the lens actually puts it */
+  M.distort = function (p, lens) {
+    if (!lens || !lens.k1) return { x: p.x, y: p.y };
+    var g = lensGeom(lens);
+    var dx = p.x - g.cx, dy = p.y - g.cy;
+    var r = Math.hypot(dx, dy) / g.R;
+    var f = 1 + lens.k1 * r * r;
+    return { x: g.cx + dx * f, y: g.cy + dy * f };
+  };
+
+  /* observed pixel -> ideal pinhole point (iterative inverse) */
+  M.undistort = function (p, lens) {
+    if (!lens || !lens.k1) return { x: p.x, y: p.y };
+    var g = lensGeom(lens);
+    var dx = p.x - g.cx, dy = p.y - g.cy;
+    var rd = Math.hypot(dx, dy) / g.R;
+    if (rd < 1e-9) return { x: p.x, y: p.y };
+    var ru = rd;
+    for (var i = 0; i < 8; i++) {
+      var f = 1 + lens.k1 * ru * ru;
+      if (Math.abs(f) < 1e-6) return { x: p.x, y: p.y };
+      ru = rd / f;
+    }
+    var s = ru / rd;
+    return { x: g.cx + dx * s, y: g.cy + dy * s };
+  };
+
+  /* total-least-squares residual of a point set about its best-fit line, in pixels */
+  function lineResidual(pts) {
+    var n = pts.length, i, mx = 0, my = 0;
+    for (i = 0; i < n; i++) { mx += pts[i].x; my += pts[i].y; }
+    mx /= n; my /= n;
+    var sxx = 0, syy = 0, sxy = 0;
+    for (i = 0; i < n; i++) {
+      var dx = pts[i].x - mx, dy = pts[i].y - my;
+      sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+    }
+    /* smaller eigenvalue of the scatter matrix = sum of squared perpendicular distances */
+    var t = (sxx + syy) / 2, d = Math.sqrt(Math.max(0, (sxx - syy) * (sxx - syy) / 4 + sxy * sxy));
+    return Math.sqrt(Math.max(0, t - d) / n);
+  }
+  M.lineResidual = lineResidual;
+
+  /* Plumb-line calibration: given sets of points that are collinear in the real world,
+     find the k1 that makes them collinear in the image. Needs no calibration target —
+     any straight edge in the room will do. */
+  M.solveK1 = function (lines, W, H) {
+    var usable = lines.filter(function (l) { return l.length >= 3; });
+    if (!usable.length) return null;
+    function cost(k1) {
+      var lens = { k1: k1, W: W, H: H }, tot = 0, m = 0;
+      for (var i = 0; i < usable.length; i++) {
+        var u = usable[i].map(function (p) { return M.undistort(p, lens); });
+        tot += lineResidual(u); m++;
+      }
+      return tot / m;
+    }
+    var best = null, i;
+    for (i = 0; i <= 200; i++) {
+      var k = -0.6 + 1.2 * (i / 200);
+      var c = cost(k);
+      if (!best || c < best.cost) best = { k1: k, cost: c };
+    }
+    var lo = best.k1 - 0.01, hi = best.k1 + 0.01;
+    for (i = 0; i < 60; i++) {
+      var m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+      if (cost(m1) < cost(m2)) hi = m2; else lo = m1;
+    }
+    var k1 = (lo + hi) / 2;
+    return { k1: k1, residual: cost(k1), residual0: cost(0), n: usable.length };
   };
 
   /* ---------------- quaternions (three.js compatible conventions) ---------------- */
@@ -782,6 +936,51 @@ window.RM = window.RM || {};
     return p;
   };
 
+  /* Offset a simple polygon outward by d (inward for d < 0), mitred at the corners.
+     Used to give walls real thickness: you measure the room's internal face, and the
+     structural face is that polygon pushed out by the wall thickness. Vertex
+     correspondence is 1:1 with the input, which is what lets openings be projected
+     through the wall. */
+  M.offsetPolygon = function (pts, d) {
+    var n = pts.length;
+    if (n < 3 || Math.abs(d) < 1e-9) return pts.map(function (p) { return { x: p.x, y: p.y }; });
+    var ccw = M.signedArea(pts) > 0;
+    var lines = [];
+    for (var i = 0; i < n; i++) {
+      var a = pts[i], b = pts[(i + 1) % n];
+      var L = M.dist(a, b);
+      if (L < 1e-9) { lines.push(null); continue; }
+      var ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+      /* outward normal: to the right of the direction of travel for a CCW ring */
+      var nx = ccw ? uy : -uy, ny = ccw ? -ux : ux;
+      lines.push({ px: a.x + nx * d, py: a.y + ny * d, ux: ux, uy: uy, nx: nx, ny: ny });
+    }
+    var out = [];
+    for (i = 0; i < n; i++) {
+      var prev = lines[(i - 1 + n) % n], cur = lines[i];
+      if (!prev || !cur) { out.push({ x: pts[i].x, y: pts[i].y }); continue; }
+      /* intersect the two offset edge lines */
+      var det = prev.ux * (-cur.uy) - prev.uy * (-cur.ux);
+      if (Math.abs(det) < 1e-9) {
+        out.push({ x: pts[i].x + cur.nx * d, y: pts[i].y + cur.ny * d });
+        continue;
+      }
+      var rx = cur.px - prev.px, ry = cur.py - prev.py;
+      var t = (rx * (-cur.uy) - ry * (-cur.ux)) / det;
+      var qx = prev.px + prev.ux * t, qy = prev.py + prev.uy * t;
+      /* clamp absurd mitres at very sharp corners */
+      var reach = Math.hypot(qx - pts[i].x, qy - pts[i].y);
+      var lim = Math.abs(d) * 4;
+      if (reach > lim) {
+        var s = lim / reach;
+        qx = pts[i].x + (qx - pts[i].x) * s;
+        qy = pts[i].y + (qy - pts[i].y) * s;
+      }
+      out.push({ x: qx, y: qy });
+    }
+    return out;
+  };
+
   /* build polygon from a chain of lengths + turn angles (manual entry) */
   M.fromLengthsAngles = function (segs, startAngleDeg) {
     var ang = (startAngleDeg || 0) * M.DEG, x = 0, y = 0, out = [{ x: 0, y: 0 }];
@@ -817,7 +1016,8 @@ window.RM = window.RM || {};
     heading: null,
     yawOffset: 0,          // user-applied zero for relative heading
     lastEventAt: 0,
-    listeners: []
+    listeners: [],
+    samples: []
   };
 
   function screenAngle() {
@@ -838,6 +1038,9 @@ window.RM = window.RM || {};
     }
     S.lastEventAt = Date.now();
     S.active = true;
+    /* keep a short history so a mark can average out sensor noise */
+    S.samples.push({ a: S.alpha, b: S.beta, g: S.gamma, o: screenAngle(), t: S.lastEventAt });
+    while (S.samples.length && S.lastEventAt - S.samples[0].t > 700) S.samples.shift();
     for (var i = 0; i < S.listeners.length; i++) { try { S.listeners[i](S); } catch (err) {} }
   }
 
@@ -871,6 +1074,33 @@ window.RM = window.RM || {};
   };
 
   S.zeroYaw = function () { S.yawOffset = S.alpha; };
+
+  /* Mean orientation over the last ~0.5 s. Sensor noise is roughly white, so averaging
+     n samples cuts the tilt error by ~sqrt(n) — and tilt error is what dominates
+     scan-mode distances. Falls back to the instantaneous reading. */
+  S.quatAvg = function (ms) {
+    var win = ms || 500, now = Date.now(), acc = [0, 0, 0, 0], n = 0, first = null;
+    for (var i = 0; i < S.samples.length; i++) {
+      var s2 = S.samples[i];
+      if (now - s2.t > win) continue;
+      var q = M.orientationToQuat(s2.a - S.yawOffset, s2.b, s2.g, s2.o);
+      if (!first) first = q;
+      /* quaternions q and -q are the same rotation; align before averaging */
+      var dot = q[0] * first[0] + q[1] * first[1] + q[2] * first[2] + q[3] * first[3];
+      var sg = dot < 0 ? -1 : 1;
+      for (var k = 0; k < 4; k++) acc[k] += q[k] * sg;
+      n++;
+    }
+    if (n < 2) return S.quat();
+    var len = Math.hypot(acc[0], acc[1], acc[2], acc[3]) || 1;
+    return [acc[0] / len, acc[1] / len, acc[2] / len, acc[3] / len];
+  };
+
+  S.sampleCount = function (ms) {
+    var win = ms || 500, now = Date.now(), n = 0;
+    for (var i = 0; i < S.samples.length; i++) if (now - S.samples[i].t <= win) n++;
+    return n;
+  };
 
   /* pitch of the optical axis below horizontal, degrees (positive = looking down) */
   S.pitchDown = function () {
@@ -945,6 +1175,7 @@ window.RM = window.RM || {};
   var M = RM.M;
   var KEY = 'roomscan.project.v1';
   var SLOTS = 'roomscan.slots.v1';
+  var CAL = 'roomscan.calib.v1';        // calibration belongs to the phone, not the room
 
   function blank() {
     return {
@@ -954,11 +1185,22 @@ window.RM = window.RM || {};
       points: [],
       walls: [],
       locks: {},
-      calib: { fRel: 0.75, camH: 1.50, fovDeg: null, verified: false },
+      calib: deviceCalib(),
       units: 'm',
+      thickness: 0,          // wall thickness (m); the plan is the INTERNAL face
+      ceilingVoid: 0,        // finished ceiling up to slab soffit (m)
       notes: '',
       updated: Date.now()
     };
+  }
+
+  function deviceCalib() {
+    var d = { fRel: 0.75, camH: 1.50, fovDeg: null, verified: false, k1: 0, k1res: null };
+    try {
+      var s = JSON.parse(localStorage.getItem(CAL) || 'null');
+      if (s) return Object.assign(d, s);
+    } catch (e) {}
+    return d;
   }
 
   var store = {
@@ -1098,10 +1340,12 @@ window.RM = window.RM || {};
     store.emit('openings');
   };
 
-  store.setWallTex = function (wall, dataURL) {
+  store.setWallTex = function (wall, dataURL, meta) {
     store.syncWalls();
     if (!store.p.walls[wall]) return;
     store.p.walls[wall].tex = dataURL;
+    /* the real-world size the rectified image covers, so it can be measured on later */
+    if (meta) store.p.walls[wall].texMeta = { len: meta.len, h: meta.h };
     store.emit('tex');
   };
 
@@ -1131,14 +1375,25 @@ window.RM = window.RM || {};
     for (var i = 0; i < n; i++) {
       (p.walls[i].openings || []).forEach(function (o) { openArea += o.w * (o.head - o.sill); });
     }
-    return {
+    var th = p.thickness || 0, out = {
       n: n,
       area: area,
       perimeter: per,
       wallArea: Math.max(0, per * p.height - openArea),
       openingArea: openArea,
-      volume: area * p.height
+      volume: area * p.height,
+      thickness: th,
+      ceilingVoid: p.ceilingVoid || 0,
+      slabSoffit: p.height + (p.ceilingVoid || 0)
     };
+    if (th > 0) {
+      var outer = M.offsetPolygon(M.ensureCCW(p.points), th);
+      out.grossArea = M.area(outer);                 // to the structural face
+      out.wallFootprint = Math.max(0, out.grossArea - area);
+      out.wallVolume = out.wallFootprint * p.height;
+    }
+    if (out.ceilingVoid > 0) out.voidVolume = area * out.ceilingVoid;
+    return out;
   };
 
   store.wallList = function () {
@@ -1161,7 +1416,16 @@ window.RM = window.RM || {};
 
   /* --- persistence --- */
   store.saveLocal = function () {
-    try { localStorage.setItem(KEY, JSON.stringify(store.p)); } catch (e) {}
+    try {
+      localStorage.setItem(KEY, JSON.stringify(store.p));
+      localStorage.setItem(CAL, JSON.stringify(store.p.calib));
+    } catch (e) {}
+  };
+
+  /* a loaded project must not drag another phone's calibration along with it */
+  store.keepDeviceCalib = function () {
+    var mine = deviceCalib();
+    if (mine.verified) store.p.calib = mine;
   };
 
   store.loadLocal = function () {
@@ -1215,6 +1479,156 @@ window.RM = window.RM || {};
   };
 
   RM.store = store;
+})();
+</script>
+<script>
+/* js/refine.js */
+/* refine.js — sub-pixel corner refinement.
+   A tap lands within a pixel or two of a corner; at 4 m on a phone that pixel is worth
+   ~18 mm, so it is the dominant error in the whole app. This snaps the tap onto the true
+   corner by solving for the point where the local intensity gradients intersect
+   (the classic cornerSubPix normal-equation method), which gets to ~0.1 px.
+   Namespace: RM.refine */
+window.RM = window.RM || {};
+(function () {
+  'use strict';
+  var M = RM.M;
+  var refine = {};
+
+  /* Grayscale view of an image, built once and reused for every tap. */
+  refine.gray = function (img) {
+    var w = img.width || img.videoWidth, h = img.height || img.videoHeight;
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0, w, h);
+    var d = g.getImageData(0, 0, w, h).data;
+    var out = new Float32Array(w * h);
+    for (var i = 0, p = 0; i < out.length; i++, p += 4) {
+      out[i] = 0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2];
+    }
+    return { data: out, w: w, h: h };
+  };
+
+  function at(G, x, y) {
+    x = x < 0 ? 0 : (x >= G.w ? G.w - 1 : x);
+    y = y < 0 ? 0 : (y >= G.h ? G.h - 1 : y);
+    return G.data[y * G.w + x];
+  }
+
+  /* One refinement pass around (px,py) over a half-window of `win` pixels. */
+  function pass(G, px, py, win) {
+    var a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0, gsum = 0;
+    var x0 = Math.round(px), y0 = Math.round(py);
+    for (var dy = -win; dy <= win; dy++) {
+      for (var dx = -win; dx <= win; dx++) {
+        var x = x0 + dx, y = y0 + dy;
+        if (x < 1 || y < 1 || x >= G.w - 1 || y >= G.h - 1) continue;
+        var gx = (at(G, x + 1, y) - at(G, x - 1, y)) * 0.5;
+        var gy = (at(G, x, y + 1) - at(G, x, y - 1)) * 0.5;
+        /* gaussian weight keeps far pixels from dragging the solution */
+        var r2 = (dx * dx + dy * dy) / (win * win);
+        var w = Math.exp(-2.0 * r2);
+        var gxx = gx * gx * w, gxy = gx * gy * w, gyy = gy * gy * w;
+        /* the sample sits at the pixel CENTRE, half a pixel past its index */
+        var qx = x + 0.5, qy = y + 0.5;
+        a11 += gxx; a12 += gxy; a22 += gyy;
+        b1 += gxx * qx + gxy * qy;
+        b2 += gxy * qx + gyy * qy;
+        gsum += (gx * gx + gy * gy) * w;
+      }
+    }
+    var det = a11 * a22 - a12 * a12;
+    if (!isFinite(det) || Math.abs(det) < 1e-9) return null;
+    var nx = (a22 * b1 - a12 * b2) / det;
+    var ny = (a11 * b2 - a12 * b1) / det;
+    if (!isFinite(nx) || !isFinite(ny)) return null;
+    /* cornerness: both eigenvalues of the gradient matrix must be non-trivial, otherwise
+       we are on a plain edge (one direction unconstrained) or flat paint (neither) */
+    var tr = a11 + a22;
+    var disc = Math.sqrt(Math.max(0, (a11 - a22) * (a11 - a22) / 4 + a12 * a12));
+    var lmin = tr / 2 - disc, lmax = tr / 2 + disc;
+    return { x: nx, y: ny, lmin: lmin, lmax: lmax, energy: gsum, det: det };
+  }
+
+  /* Refine a tap. Returns {x,y,moved,quality,kind} — or the original point when the
+     image gives nothing to lock onto, so a tap on featureless floor is never made worse. */
+  refine.corner = function (G, p, opts) {
+    opts = opts || {};
+    var win = opts.win || 8;
+    var maxMove = opts.maxMove || win * 1.2;
+    var x = p.x, y = p.y, r = null;
+    for (var it = 0; it < 4; it++) {
+      var q = pass(G, x, y, win);
+      if (!q) break;
+      var step = Math.hypot(q.x - x, q.y - y);
+      x = q.x; y = q.y; r = q;
+      if (step < 0.02) break;
+      if (Math.hypot(x - p.x, y - p.y) > maxMove) break;
+    }
+    var moved = Math.hypot(x - p.x, y - p.y);
+    if (!r || moved > maxMove || !isFinite(x) || !isFinite(y)) {
+      return { x: p.x, y: p.y, moved: 0, quality: 0, kind: 'kept' };
+    }
+    /* normalise cornerness against window size so the threshold is scale-free */
+    var area = (2 * win + 1) * (2 * win + 1);
+    var q1 = r.lmin / area, q2 = r.lmax / area;
+    var kind = q1 > 12 ? 'corner' : (q2 > 12 ? 'edge' : 'flat');
+    if (kind === 'flat') return { x: p.x, y: p.y, moved: 0, quality: q1, kind: 'flat' };
+    if (kind === 'edge' && moved > win * 0.6) {
+      /* on a bare edge the solution slides along it — don't trust a big move */
+      return { x: p.x, y: p.y, moved: 0, quality: q1, kind: 'edge' };
+    }
+    return { x: x, y: y, moved: moved, quality: q1, kind: kind };
+  };
+
+  /* Auto-detect the interior intersections of an m x n grid of identical tiles.
+     The four outer corners give a first homography; every interior node is predicted
+     through it, refined sub-pixel, and kept if it locks on. Re-solving over all of them
+     is a least-squares fit — the same four taps, many times the information. */
+  refine.gridNodes = function (G, H, cols, rows, tileW, tileH, lens) {
+    if (!H || cols < 1 || rows < 1) return { src: [], dst: [], found: 0, tried: 0 };
+    var Hi = M.invert3(H);
+    if (!Hi) return { src: [], dst: [], found: 0, tried: 0 };
+    var src = [], dst = [], tried = 0, moves = [];
+    for (var j = 0; j <= rows; j++) {
+      for (var i = 0; i <= cols; i++) {
+        var world = { x: i * tileW, y: j * tileH };
+        var ideal = M.applyH(Hi, world);
+        if (!ideal) continue;
+        var pix = lens ? M.distort(ideal, lens) : ideal;
+        if (pix.x < 2 || pix.y < 2 || pix.x > G.w - 3 || pix.y > G.h - 3) continue;
+        tried++;
+        var isOuter = (i === 0 || i === cols) && (j === 0 || j === rows);
+        var rr = refine.corner(G, pix, { win: 7, maxMove: 3.5 });
+        if (rr.kind === 'corner' || isOuter) {
+          src.push({ x: rr.x, y: rr.y });
+          dst.push(world);
+          if (rr.moved) moves.push(rr.moved);
+        }
+      }
+    }
+    var med = 0;
+    if (moves.length) {
+      moves.sort(function (a, b) { return a - b; });
+      med = moves[Math.floor(moves.length / 2)];
+    }
+    return { src: src, dst: dst, found: src.length, tried: tried, medianMove: med };
+  };
+
+  /* RMS reprojection error of a homography, in millimetres of world units */
+  refine.rms = function (H, src, dst) {
+    if (!H || !src.length) return null;
+    var s = 0;
+    for (var i = 0; i < src.length; i++) {
+      var w = M.applyH(H, src[i]);
+      if (!w) continue;
+      s += (w.x - dst[i].x) * (w.x - dst[i].x) + (w.y - dst[i].y) * (w.y - dst[i].y);
+    }
+    return Math.sqrt(s / src.length) * 1000;
+  };
+
+  RM.refine = refine;
 })();
 </script>
 <script>
@@ -1433,6 +1847,16 @@ window.RM = window.RM || {};
       g.fill();
     }
 
+    /* structural face, when a wall thickness is set */
+    if (n >= 3 && (store.p.thickness || 0) > 0) {
+      var outer = M.offsetPolygon(M.ensureCCW(p), store.p.thickness).map(W2S);
+      g.strokeStyle = 'rgba(154,165,182,.55)';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      outer.forEach(function (s2, k) { k ? g.lineTo(s2.x, s2.y) : g.moveTo(s2.x, s2.y); });
+      g.closePath(); g.stroke();
+    }
+
     /* walls */
     for (var i = 0; i < n; i++) {
       var a = S[i], b = S[(i + 1) % n];
@@ -1586,8 +2010,14 @@ window.RM = window.RM || {};
     mode: 'ref',            // 'ref' | 'corners' | 'wall'
     ref: [],                // 4 image-space points of the known rectangle
     refW: 0.297, refH: 0.210,
+    cols: 1, rows: 1,              // reference is an m x n block of identical tiles
+    gray: null,                    // cached grayscale for sub-pixel refinement
+    autoRefine: true,
+    fit: null,                     // {src,dst,rms,n} from the least-squares grid solve
     corners: [],            // image-space taps -> room corners
     wallQuad: [],           // 4 image pts for wall rectification
+    lines: [], lineIdx: 0,  // 'lens' mode: sets of points that are straight in the real world
+    mPts: [], mWall: -1, mKind: 'dist',   // 'measure' mode over a rectified wall
     H: null,                // image -> world (metres)
     active: -1,
     onchange: null,
@@ -1606,6 +2036,7 @@ window.RM = window.RM || {};
       var im = new Image();
       im.onload = function () {
         photo.img = im;
+        try { photo.gray = RM.refine.gray(im); } catch (e) { photo.gray = null; }
         photo.reset(true);
         photo.draw();
         res(im);
@@ -1621,6 +2052,12 @@ window.RM = window.RM || {};
     photo.wallQuad = [];
     photo.active = -1;
     emit();
+  };
+
+  photo.lens = function () {
+    var k1 = RM.store.p.calib.k1 || 0;
+    if (!photo.img || !k1) return null;
+    return { k1: k1, W: photo.img.width, H: photo.img.height };
   };
 
   photo.setMode = function (m) { photo.mode = m; photo.active = -1; photo.draw(); emit(); };
@@ -1649,9 +2086,14 @@ window.RM = window.RM || {};
     var dragging = -1, moved = 0, down = null;
     function local(e) { var r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
     function list() {
+      if (photo.mode === 'measure') return photo.mPts;
+      if (photo.mode === 'lens') return photo.curLine();
       return photo.mode === 'ref' ? photo.ref : photo.mode === 'wall' ? photo.wallQuad : photo.corners;
     }
-    function maxPts() { return photo.mode === 'corners' ? 999 : 4; }
+    function maxPts() {
+      if (photo.mode === 'measure') return 2;
+      return (photo.mode === 'corners' || photo.mode === 'lens') ? 999 : 4;
+    }
 
     canvas.addEventListener('pointerdown', function (e) {
       if (!photo.img) return;
@@ -1664,7 +2106,7 @@ window.RM = window.RM || {};
       });
       if (best >= 0) { dragging = best; photo.active = best; }
       else if (L.length < maxPts()) {
-        L.push(C2I(down));
+        L.push(photo.mode === 'lens' ? C2I(down) : photo.snap(C2I(down)));
         dragging = L.length - 1; photo.active = dragging;
         if (photo.mode === 'ref' && L.length === 4) photo.solve();
         emit();
@@ -1684,7 +2126,12 @@ window.RM = window.RM || {};
     });
 
     function end() {
-      if (dragging >= 0) { photo.touch = null; emit(); }
+      if (dragging >= 0) {
+        var L2 = list();
+        if (L2[dragging] && photo.mode !== 'lens') L2[dragging] = photo.snap(L2[dragging]);
+        if (photo.mode === 'ref' && photo.ref.length === 4) photo.solve();
+        photo.touch = null; emit();
+      }
       dragging = -1; down = null;
       photo.draw();
     }
@@ -1692,7 +2139,108 @@ window.RM = window.RM || {};
     canvas.addEventListener('pointercancel', end);
   }
 
+  /* pull a tapped point onto the true image corner */
+  photo.snap = function (pt) {
+    if (!photo.autoRefine || !photo.gray || !RM.refine) return pt;
+    var r = RM.refine.corner(photo.gray, pt, { win: 7, maxMove: 4.5 });
+    photo.lastSnap = r;
+    return (r.kind === 'corner') ? { x: r.x, y: r.y } : pt;
+  };
+
+  /* ---------- measuring on a rectified wall ----------
+     A rectified wall photo IS a metric image: it covers len x height metres exactly.
+     Loading it with a scale-only homography turns every tap into wall coordinates
+     (s along the wall from its first corner, t up from floor level). */
+  photo.loadWallMeasure = function (wallIdx) {
+    store.syncWalls();
+    var w = store.p.walls[wallIdx];
+    if (!w || !w.tex) return Promise.reject(new Error('That wall has no photo yet.'));
+    var meta = w.texMeta;
+    if (!meta) {
+      var list = store.wallList();
+      meta = { len: list[wallIdx] ? list[wallIdx].len : 1, h: store.p.height };
+    }
+    return photo.setImage(w.tex).then(function (im) {
+      photo.mWall = wallIdx;
+      photo.mPts = [];
+      photo.ref = []; photo.corners = []; photo.wallQuad = [];
+      /* image px -> wall metres; image y is down, wall t is up from the floor */
+      photo.H = [meta.len / im.width, 0, 0,
+                 0, -meta.h / im.height, meta.h,
+                 0, 0, 1];
+      photo.mMeta = meta;
+      photo.mode = 'measure';
+      emit();
+      return meta;
+    });
+  };
+
+  photo.measurement = function () {
+    if (photo.mPts.length < 2 || !photo.H) return null;
+    var a = M.applyH(photo.H, photo.mPts[0]), b = M.applyH(photo.H, photo.mPts[1]);
+    if (!a || !b) return null;
+    return {
+      a: a, b: b,
+      dist: M.dist(a, b),
+      ds: Math.abs(b.x - a.x), dt: Math.abs(b.y - a.y),
+      s0: Math.min(a.x, b.x), s1: Math.max(a.x, b.x),
+      t0: Math.min(a.y, b.y), t1: Math.max(a.y, b.y)
+    };
+  };
+
+  photo.openingFromMeasure = function (kind) {
+    var m = photo.measurement();
+    if (!m) return { ok: false, msg: 'Tap two opposite corners of the opening first.' };
+    if (photo.mWall < 0) return { ok: false, msg: 'No wall loaded.' };
+    if (m.ds < 0.05 || m.dt < 0.05) return { ok: false, msg: 'That is too small to be an opening.' };
+    var o = {
+      kind: kind || (m.t0 < 0.1 ? 'door' : 'window'),
+      off: M.round(m.s0, 3), w: M.round(m.ds, 3),
+      sill: M.round(m.t0, 3), head: M.round(m.t1, 3)
+    };
+    store.addOpening(photo.mWall, o);
+    photo.mPts = [];
+    emit();
+    return { ok: true, o: o, wall: photo.mWall,
+             msg: o.kind + ' ' + o.w.toFixed(3) + ' x ' + (o.head - o.sill).toFixed(3) +
+                  ' m added to wall ' + (photo.mWall + 1) };
+  };
+
+  /* ---------- lens (plumb-line) calibration ---------- */
+  photo.curLine = function () {
+    if (!photo.lines[photo.lineIdx]) photo.lines[photo.lineIdx] = [];
+    return photo.lines[photo.lineIdx];
+  };
+  photo.newLine = function () {
+    if (photo.curLine().length) photo.lineIdx = photo.lines.length;
+    photo.curLine();
+    emit();
+  };
+  photo.clearLines = function () { photo.lines = []; photo.lineIdx = 0; emit(); };
+  photo.lineCount = function () {
+    return photo.lines.filter(function (l) { return l.length >= 3; }).length;
+  };
+  photo.solveLens = function () {
+    if (!photo.img) return { ok: false, msg: 'Load a photo first.' };
+    if (photo.lineCount() < 1) return { ok: false, msg: 'Trace at least one straight edge with 3 or more points.' };
+    var r = M.solveK1(photo.lines, photo.img.width, photo.img.height);
+    if (!r) return { ok: false, msg: 'Could not fit a distortion coefficient.' };
+    store.p.calib.k1 = M.round(r.k1, 5);
+    store.p.calib.k1res = M.round(r.residual, 3);
+    store.emit('calib');
+    photo.solve();
+    var gain = r.residual0 - r.residual;
+    return {
+      ok: true, k1: r.k1,
+      msg: 'k1 = ' + r.k1.toFixed(4) + ' from ' + r.n + ' line(s). Straightness ' +
+           r.residual0.toFixed(2) + ' -> ' + r.residual.toFixed(2) + ' px' +
+           (gain < 0.15 ? ' (your phone already corrects distortion - nothing to gain)' : '')
+    };
+  };
+
   photo.undoPoint = function () {
+    if (photo.mode === 'measure') { photo.mPts.pop(); emit(); return; }
+    if (photo.mode === 'lens') { photo.curLine().pop(); emit(); return; }
     var L = photo.mode === 'ref' ? photo.ref : photo.mode === 'wall' ? photo.wallQuad : photo.corners;
     L.pop();
     if (photo.mode === 'ref') photo.H = null;
@@ -1702,15 +2250,37 @@ window.RM = window.RM || {};
 
   /* ---------- metrology ---------- */
   photo.solve = function () {
-    if (photo.ref.length !== 4) { photo.H = null; return null; }
-    var dst = [{ x: 0, y: 0 }, { x: photo.refW, y: 0 }, { x: photo.refW, y: photo.refH }, { x: 0, y: photo.refH }];
-    photo.H = M.homography(photo.ref, dst);
+    if (photo.ref.length !== 4) { photo.H = null; photo.fit = null; return null; }
+    var lens = photo.lens();
+    var cols = Math.max(1, photo.cols | 0), rows = Math.max(1, photo.rows | 0);
+    var Wm = photo.refW * cols, Hm = photo.refH * rows;
+    var und = photo.ref.map(function (p) { return lens ? M.undistort(p, lens) : p; });
+    var dst = [{ x: 0, y: 0 }, { x: Wm, y: 0 }, { x: Wm, y: Hm }, { x: 0, y: Hm }];
+    var H = M.homography(und, dst);
+    photo.fit = null;
+    if (!H) { photo.H = null; return null; }
+
+    /* every interior tile joint is a free extra measurement — find and use them */
+    if ((cols > 1 || rows > 1) && photo.gray && RM.refine) {
+      var g = RM.refine.gridNodes(photo.gray, H, cols, rows, photo.refW, photo.refH, lens);
+      if (g.found >= 4) {
+        var undG = g.src.map(function (p) { return lens ? M.undistort(p, lens) : p; });
+        var H2 = M.homography(undG, g.dst);
+        if (H2) {
+          var rms = RM.refine.rms(H2, undG, g.dst);
+          photo.fit = { n: g.found, tried: g.tried, rms: rms, medianMove: g.medianMove };
+          H = H2;
+        }
+      }
+    }
+    photo.H = H;
     return photo.H;
   };
 
   photo.world = function (imgPt) {
     if (!photo.H) return null;
-    return M.applyH(photo.H, imgPt);
+    var lens = photo.lens();
+    return M.applyH(photo.H, lens ? M.undistort(imgPt, lens) : imgPt);
   };
 
   /* local scale in mm per image pixel — an honest precision indicator */
@@ -1740,7 +2310,9 @@ window.RM = window.RM || {};
     var aspect = Math.max(0.05, lenM / Math.max(0.05, hM));
     var w = Math.round(px), h = Math.round(px / aspect);
     var dst = [{ x: 0, y: h }, { x: w, y: h }, { x: w, y: 0 }, { x: 0, y: 0 }];  // BL,BR,TR,TL
-    var Hm = M.homography(dst, photo.wallQuad);                                   // dst -> image
+    var lensW = photo.lens();
+    var quadU = photo.wallQuad.map(function (q) { return lensW ? M.undistort(q, lensW) : q; });
+    var Hm = M.homography(dst, quadU);                                            // dst -> ideal image
     if (!Hm) return null;
     var src = document.createElement('canvas');
     src.width = photo.img.width; src.height = photo.img.height;
@@ -1754,6 +2326,7 @@ window.RM = window.RM || {};
         var p = M.applyH(Hm, { x: x + 0.5, y: y + 0.5 });
         var o = (y * w + x) * 4;
         if (!p) { od.data[o + 3] = 255; continue; }
+        if (lensW) p = M.distort(p, lensW);
         var sx = Math.round(p.x), sy = Math.round(p.y);
         if (sx < 0 || sy < 0 || sx >= src.width || sy >= src.height) { od.data[o + 3] = 255; continue; }
         var so = (sy * src.width + sx) * 4;
@@ -1781,11 +2354,13 @@ window.RM = window.RM || {};
     }
     g.drawImage(photo.img, f.ox, f.oy, photo.img.width * f.s, photo.img.height * f.s);
 
-    if (photo.H && photo.mode !== 'wall') drawFloorGrid(g);
+    if (photo.H && photo.mode !== 'wall' && photo.mode !== 'measure') drawFloorGrid(g);
 
     if (photo.ref.length) drawPoly(g, photo.ref, '#39d0a8', ['A', 'B', 'C', 'D'], photo.mode === 'ref');
     if (photo.wallQuad.length) drawPoly(g, photo.wallQuad, '#2b7fff', ['BL', 'BR', 'TR', 'TL'], photo.mode === 'wall');
     if (photo.corners.length) drawCorners(g);
+    if (photo.mode === 'lens') drawLines(g);
+    if (photo.mode === 'measure') drawMeasure(g);
     if (photo.touch && photo.active >= 0) drawLoupe(g, f);
   };
 
@@ -1850,6 +2425,7 @@ window.RM = window.RM || {};
   function drawFloorGrid(g) {
     var Hi = M.invert3(photo.H);
     if (!Hi) return;
+    var lensG = photo.lens();
     g.strokeStyle = 'rgba(57,208,168,.35)'; g.lineWidth = 1;
     var R = 6;
     for (var i = -R; i <= R; i++) {
@@ -1862,6 +2438,7 @@ window.RM = window.RM || {};
         var t = k / N;
         var p = M.applyH(Hi, { x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t });
         if (!p) return;
+        if (lensG) p = M.distort(p, lensG);
         var s = I2C(p);
         if (s.x < -4000 || s.x > 8000 || s.y < -4000 || s.y > 8000) return;
         k ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y);
@@ -1870,8 +2447,62 @@ window.RM = window.RM || {};
     }
   }
 
+  function drawLines(g) {
+    var lens = photo.lens();
+    photo.lines.forEach(function (L, li) {
+      if (!L.length) return;
+      var cur = li === photo.lineIdx;
+      var S2 = L.map(I2C);
+      /* the straight line these points should lie on, once undistorted */
+      if (L.length >= 2) {
+        g.strokeStyle = cur ? 'rgba(255,182,77,.95)' : 'rgba(154,165,182,.6)';
+        g.lineWidth = cur ? 2 : 1.5;
+        g.setLineDash([5, 4]);
+        g.beginPath(); g.moveTo(S2[0].x, S2[0].y); g.lineTo(S2[S2.length - 1].x, S2[S2.length - 1].y); g.stroke();
+        g.setLineDash([]);
+      }
+      S2.forEach(function (s2) {
+        g.beginPath(); g.arc(s2.x, s2.y, 6, 0, 6.2832);
+        g.fillStyle = 'rgba(11,13,17,.8)'; g.fill();
+        g.strokeStyle = cur ? '#ffb64d' : '#9aa5b6'; g.lineWidth = 2; g.stroke();
+      });
+      if (L.length >= 3) {
+        var und = L.map(function (p) { return lens ? M.undistort(p, lens) : p; });
+        var res = M.lineResidual(und);
+        var mid = S2[Math.floor(S2.length / 2)];
+        label(g, mid.x, mid.y - 18, res.toFixed(2) + ' px off', cur ? '#ffb64d' : '#9aa5b6');
+      }
+    });
+  }
+
+  function drawMeasure(g) {
+    var S2 = photo.mPts.map(I2C);
+    S2.forEach(function (s2, i) {
+      g.beginPath(); g.arc(s2.x, s2.y, 8, 0, 6.2832);
+      g.fillStyle = i === photo.active ? '#39d0a8' : 'rgba(11,13,17,.8)';
+      g.fill(); g.strokeStyle = '#39d0a8'; g.lineWidth = 2; g.stroke();
+    });
+    var m = photo.measurement();
+    if (!m || S2.length < 2) return;
+    /* dashed bounding box, so it reads as an opening when you are placing one */
+    g.strokeStyle = 'rgba(57,208,168,.55)'; g.lineWidth = 1.5; g.setLineDash([5, 4]);
+    g.strokeRect(Math.min(S2[0].x, S2[1].x), Math.min(S2[0].y, S2[1].y),
+                 Math.abs(S2[1].x - S2[0].x), Math.abs(S2[1].y - S2[0].y));
+    g.setLineDash([]);
+    g.strokeStyle = '#39d0a8'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(S2[0].x, S2[0].y); g.lineTo(S2[1].x, S2[1].y); g.stroke();
+    var mid = { x: (S2[0].x + S2[1].x) / 2, y: (S2[0].y + S2[1].y) / 2 };
+    label(g, mid.x, mid.y - 14, RM.plan.fmt(m.dist), '#39d0a8');
+    label(g, mid.x, mid.y + 8, m.ds.toFixed(3) + ' w  x  ' + m.dt.toFixed(3) + ' h', '#9aa5b6');
+    /* heights above floor level, which is what you actually want off a wall photo */
+    label(g, S2[0].x, S2[0].y + 22, m.a.y.toFixed(3) + ' AFF', '#9aa5b6');
+    label(g, S2[1].x, S2[1].y + 22, m.b.y.toFixed(3) + ' AFF', '#9aa5b6');
+  }
+
   function drawLoupe(g, f) {
-    var L = photo.mode === 'ref' ? photo.ref : photo.mode === 'wall' ? photo.wallQuad : photo.corners;
+    var L = photo.mode === 'measure' ? photo.mPts
+          : photo.mode === 'lens' ? photo.curLine()
+          : photo.mode === 'ref' ? photo.ref : photo.mode === 'wall' ? photo.wallQuad : photo.corners;
     var p = L[photo.active];
     if (!p) return;
     var R = 52, z = 3.5;
@@ -1971,16 +2602,40 @@ window.RM = window.RM || {};
     return { x: pt.x * s + (cw - vw * s) / 2, y: pt.y * s + (ch - vh * s) / 2 };
   };
 
+  scan.lens = function () {
+    var k1 = store.p.calib.k1 || 0;
+    if (!k1) return null;
+    var c = scan.cam();
+    return { k1: k1, W: c.W, H: c.H };
+  };
+
   scan.aimPx = function () {
     var c = scan.canvas;
     var d = scan.aim || { x: c.clientWidth / 2, y: c.clientHeight / 2 };
-    return scan.toVideoPx(d);
+    var p = scan.toVideoPx(d);
+    var lens = scan.lens();
+    return lens ? M.undistort(p, lens) : p;
   };
 
   /* floor point under the aim, in the LOCAL (station) frame */
-  scan.floorAtAim = function () {
+  scan.floorAtAim = function (avg) {
     var p = scan.aimPx();
-    return M.rayToFloor(p.x, p.y, scan.cam(), S.quat(), store.p.calib.camH);
+    var q = avg ? S.quatAvg() : S.quat();
+    return M.rayToFloor(p.x, p.y, scan.cam(), q, store.p.calib.camH);
+  };
+
+  /* How much the computed distance moves for 0.1 degree of tilt error.
+     Sensitivity is h/sin^2(pitch), so a shallow sighting is worth almost nothing —
+     this puts a number on that instead of leaving it to be discovered later. */
+  scan.tiltSensitivity = function () {
+    var p = scan.aimPx(), cam = scan.cam(), h = store.p.calib.camH;
+    var q = S.quatAvg();
+    var a = M.rayToFloor(p.x, p.y, cam, q, h);
+    if (!a) return null;
+    var dq = M.qMul(M.qFromAxisAngle(1, 0, 0, 0.1 * M.DEG), q);
+    var b = M.rayToFloor(p.x, p.y, cam, dq, h);
+    if (!b) return null;
+    return Math.abs(Math.hypot(b.x, b.y) - Math.hypot(a.x, a.y)) * 1000;
   };
 
   scan.localToWorld = function (p) {
@@ -1995,7 +2650,7 @@ window.RM = window.RM || {};
 
   /* ---------- actions ---------- */
   scan.markCorner = function () {
-    var f = scan.floorAtAim();
+    var f = scan.floorAtAim(true);
     if (!f) return { ok: false, msg: 'Aim below the horizon — point at the floor where the walls meet.' };
     if (f.range > 25) return { ok: false, msg: 'Too far / too close to the horizon to be reliable (' + f.range.toFixed(1) + ' m).' };
     scan.lastLocal = { x: f.x, y: f.y };
@@ -2008,7 +2663,7 @@ window.RM = window.RM || {};
   scan.measureHeightAtLast = function () {
     if (!scan.lastLocal) return { ok: false, msg: 'Mark a floor corner first, then aim at the ceiling directly above it.' };
     var p = scan.aimPx();
-    var h = M.rayToHeightAt(p.x, p.y, scan.cam(), S.quat(), store.p.calib.camH, scan.lastLocal);
+    var h = M.rayToHeightAt(p.x, p.y, scan.cam(), S.quatAvg(), store.p.calib.camH, scan.lastLocal);
     if (h == null || h < 0.5 || h > 12) return { ok: false, msg: 'Could not resolve a sensible height — aim at the wall/ceiling line above the last corner.' };
     store.setHeight(h);
     return { ok: true, msg: 'Ceiling height ' + h.toFixed(3) + ' m', h: h };
@@ -2056,7 +2711,7 @@ window.RM = window.RM || {};
   /* ---------- calibration ---------- */
   /* one known ground distance + known camera height -> focal length */
   scan.calibFocalFromDistance = function (knownDist) {
-    var p = scan.aimPx(), q = S.quat(), cam = scan.cam(), h = store.p.calib.camH;
+    var p = scan.aimPx(), q = S.quatAvg(), cam = scan.cam(), h = store.p.calib.camH;
     var maxd = Math.max(cam.W, cam.H);
     var best = null;
     for (var i = 0; i <= 400; i++) {
@@ -2088,7 +2743,7 @@ window.RM = window.RM || {};
   /* two known ground distances -> focal length AND camera height (no tape on the phone) */
   scan.addCalibSample = function (knownDist) {
     var p = scan.aimPx();
-    scan.calibSamples.push({ u: p.x, v: p.y, quat: S.quat(), dist: knownDist });
+    scan.calibSamples.push({ u: p.x, v: p.y, quat: S.quatAvg(), dist: knownDist });
     return scan.calibSamples.length;
   };
 
@@ -2125,7 +2780,9 @@ window.RM = window.RM || {};
     if (d[2] >= -0.05) return null;
     var u = cam.W / 2 + cam.f * (d[0] / -d[2]);
     var vv = cam.H / 2 - cam.f * (d[1] / -d[2]);
-    return scan.toDisplay({ x: u, y: vv });
+    var lens = scan.lens();
+    var pp = lens ? M.distort({ x: u, y: vv }, lens) : { x: u, y: vv };
+    return scan.toDisplay(pp);
   };
 
   scan.draw = function () {
@@ -2284,6 +2941,7 @@ window.RM = window.RM || {};
     if (n < 3) return meshes;
     var pts = M.ensureCCW(p.points.map(function (q) { return { x: q.x, y: q.y }; }));
     var ccwFlip = M.signedArea(p.points) < 0;
+    var TH = p.thickness || 0;
 
     /* ---- floor ---- */
     var tri = M.triangulate(pts);
@@ -2351,25 +3009,117 @@ window.RM = window.RM || {};
       (wall.openings || []).forEach(function (o) {
         var s0 = M.clamp(ccwFlip ? L - (o.off + o.w) : o.off, 0, L), s1 = M.clamp(s0 + o.w, 0, L);
         var t0 = M.clamp(o.sill, 0, H), t1 = M.clamp(o.head, 0, H);
-        var d = 0.12, gp = [], gn = [], gu = [], gi = [], bs = 0;
+        /* reveal depth is the real wall thickness when one is set */
+        var d = TH > 0 ? TH : 0.12;
+        var gp = [], gn = [], gu = [], gi = [], bs = 0;
         function face(q0, q1, q2, q3, nrm) {
           [q0, q1, q2, q3].forEach(function (q) { gp.push(q[0], q[1], q[2]); gn.push(nrm[0], nrm[1], nrm[2]); gu.push(0, 0); });
           gi.push(bs, bs + 1, bs + 2, bs, bs + 2, bs + 3); bs += 4;
         }
-        function P(s, t, off) {
-          var px = a.x + ux * s - nx * off, py = a.y + uy * s - ny * off;
+        function P(sv, t, off) {
+          var px = a.x + ux * sv - nx * off, py = a.y + uy * sv - ny * off;
           return [px, t, -py];
         }
         face(P(s0, t0, 0), P(s1, t0, 0), P(s1, t0, d), P(s0, t0, d), [0, 1, 0]);   // sill
         face(P(s0, t1, 0), P(s0, t1, d), P(s1, t1, d), P(s1, t1, 0), [0, -1, 0]);  // head
-        face(P(s0, t0, 0), P(s0, t0, d), P(s0, t1, d), P(s0, t1, 0), [ux, 0, -uy]);
-        face(P(s1, t0, 0), P(s1, t1, 0), P(s1, t1, d), P(s1, t0, d), [-ux, 0, uy]);
+        face(P(s0, t0, 0), P(s0, t0, d), P(s0, t1, d), P(s0, t1, 0), [ux, 0, -uy]); // jamb
+        face(P(s1, t0, 0), P(s1, t1, 0), P(s1, t1, d), P(s1, t0, d), [-ux, 0, uy]); // jamb
         meshes.push({
           name: (o.kind === 'door' ? 'Door' : 'Window') + ' W' + (wallIndex + 1),
           pos: gp, nrm: gn, uv: gu, idx: gi,
           color: o.kind === 'door' ? [0.35, 0.27, 0.2] : [0.55, 0.68, 0.78], kind: 'reveal'
         });
       });
+    }
+
+    /* ---- structural shell: the internal plan pushed out by the wall thickness ---- */
+    if (TH > 0) {
+      var outer = M.offsetPolygon(pts, TH);
+      for (var e2 = 0; e2 < n; e2++) {
+        var ia = pts[e2], ib = pts[(e2 + 1) % n];
+        var oa = outer[e2], ob = outer[(e2 + 1) % n];
+        var Lo = M.dist(oa, ob);
+        if (Lo < 1e-4) continue;
+        var oux = (ob.x - oa.x) / Lo, ouy = (ob.y - oa.y) / Lo;
+        var wallIdx2 = ccwFlip ? (((n - 2 - e2) % n) + n) % n : e2;
+        var w2 = (p.walls && p.walls[wallIdx2]) || { openings: [] };
+        var Li = M.dist(ia, ib);
+        var iux = Li > 1e-9 ? (ib.x - ia.x) / Li : 0, iuy = Li > 1e-9 ? (ib.y - ia.y) / Li : 0;
+        var inx = iuy, iny = -iux;
+
+        /* project each opening through the wall onto the outer face */
+        var rects2 = [{ s0: 0, s1: Lo, t0: 0, t1: H }];
+        (w2.openings || []).forEach(function (o) {
+          var is0 = M.clamp(ccwFlip ? Li - (o.off + o.w) : o.off, 0, Li);
+          var is1 = M.clamp(is0 + o.w, 0, Li);
+          var p0 = { x: ia.x + iux * is0 - inx * TH, y: ia.y + iuy * is0 - iny * TH };
+          var p1 = { x: ia.x + iux * is1 - inx * TH, y: ia.y + iuy * is1 - iny * TH };
+          var os0 = (p0.x - oa.x) * oux + (p0.y - oa.y) * ouy;
+          var os1 = (p1.x - oa.x) * oux + (p1.y - oa.y) * ouy;
+          rects2 = splitRects(rects2, {
+            s0: M.clamp(Math.min(os0, os1), 0, Lo), s1: M.clamp(Math.max(os0, os1), 0, Lo),
+            t0: M.clamp(o.sill, 0, H), t1: M.clamp(o.head, 0, H)
+          });
+        });
+
+        var op = [], on = [], ou = [], oi = [], ob2 = 0;
+        rects2.forEach(function (r) {
+          [{ s: r.s0, t: r.t0 }, { s: r.s1, t: r.t0 }, { s: r.s1, t: r.t1 }, { s: r.s0, t: r.t1 }].forEach(function (q) {
+            op.push(oa.x + oux * q.s, q.t, -(oa.y + ouy * q.s));
+            on.push(-ouy, 0, -oux);            // outward
+            ou.push(q.s / Lo, 1 - q.t / H);
+          });
+          oi.push(ob2, ob2 + 2, ob2 + 1, ob2, ob2 + 3, ob2 + 2);
+          ob2 += 4;
+        });
+        if (op.length) {
+          meshes.push({
+            name: 'Wall ' + (wallIdx2 + 1) + ' outer', pos: op, nrm: on, uv: ou, idx: oi,
+            color: [0.62, 0.63, 0.66], kind: 'outer'
+          });
+        }
+      }
+
+      /* cap the wall band at ceiling and floor level so the shell is a closed solid */
+      var cp = [], cn = [], cu = [], ci = [], cb = 0;
+      for (var e3 = 0; e3 < n; e3++) {
+        var i0 = pts[e3], i1 = pts[(e3 + 1) % n], o0 = outer[e3], o1 = outer[(e3 + 1) % n];
+        [[i0, i1, o1, o0, H, 1], [i0, o0, o1, i1, 0, -1]].forEach(function (q) {
+          var y = q[4], sgn = q[5];
+          [q[0], q[1], q[2], q[3]].forEach(function (pt) {
+            cp.push(pt.x, y, -pt.y); cn.push(0, sgn, 0); cu.push(0, 0);
+          });
+          ci.push(cb, cb + 1, cb + 2, cb, cb + 2, cb + 3);
+          cb += 4;
+        });
+      }
+      if (cp.length) {
+        meshes.push({ name: 'Wall tops', pos: cp, nrm: cn, uv: cu, idx: ci,
+                      color: [0.5, 0.51, 0.54], kind: 'captop' });
+      }
+    }
+
+    /* ---- ceiling void: finished ceiling up to the slab soffit ---- */
+    if ((p.ceilingVoid || 0) > 0) {
+      var vh = p.ceilingVoid, vp = [], vn = [], vu = [], vi = [], vb = 0;
+      for (var e4 = 0; e4 < n; e4++) {
+        var va = pts[e4], vbp = pts[(e4 + 1) % n];
+        var VL = M.dist(va, vbp);
+        if (VL < 1e-4) continue;
+        var vux = (vbp.x - va.x) / VL, vuy = (vbp.y - va.y) / VL;
+        [[0, H], [1, H], [1, H + vh], [0, H + vh]].forEach(function (q) {
+          var sv = q[0] * VL;
+          vp.push(va.x + vux * sv, q[1], -(va.y + vuy * sv));
+          vn.push(vuy, 0, vux);
+          vu.push(q[0], 0);
+        });
+        vi.push(vb, vb + 1, vb + 2, vb, vb + 2, vb + 3);
+        vb += 4;
+      }
+      if (vp.length) {
+        meshes.push({ name: 'Ceiling void', pos: vp, nrm: vn, uv: vu, idx: vi,
+                      color: [0.30, 0.42, 0.52], kind: 'void' });
+      }
     }
     return meshes;
   };
@@ -2442,7 +3192,7 @@ window.RM = window.RM || {};
 
     this.objs = [];
     this.grid = null;
-    this.show = { ceiling: false, tex: true, grid: true, edges: true };
+    this.show = { ceiling: false, tex: true, grid: true, edges: true, voids: true };
     this.cam = { r: 8, th: -0.9, ph: 0.85, tgt: [0, 1.2, 0] };
     this.dirty = true;
 
@@ -2642,6 +3392,7 @@ window.RM = window.RM || {};
 
     this.objs.forEach(function (o) {
       if (o.kind === 'ceiling' && !self.show.ceiling) return;
+      if (o.kind === 'void' && !self.show.voids) return;
       bind(o);
       gl.uniform3f(L.uColor, o.color[0], o.color[1], o.color[2]);
       gl.uniform1f(L.uUnlit, 0);
@@ -2990,7 +3741,9 @@ window.RM = window.RM || {};
     o.push('<text x="20" y="' + y0 + '" font-family="sans-serif" font-size="16" font-weight="600" fill="#12161d">' + esc(p.name) + '</text>');
     o.push('<text x="20" y="' + (y0 + 20) + '" font-family="sans-serif" font-size="12" fill="#5b6675">' +
            'Floor area ' + st.area.toFixed(2) + ' m²  ·  Perimeter ' + st.perimeter.toFixed(2) + ' m  ·  Ceiling ' + p.height.toFixed(3) + ' m  ·  Net wall area ' +
-           st.wallArea.toFixed(2) + ' m²  ·  Volume ' + st.volume.toFixed(2) + ' m³</text>');
+           st.wallArea.toFixed(2) + ' m²  ·  Volume ' + st.volume.toFixed(2) + ' m³' +
+           (st.thickness > 0 ? '  ·  Walls ' + (st.thickness * 1000).toFixed(0) + ' mm' : '') +
+           (st.ceilingVoid > 0 ? '  ·  Slab soffit ' + st.slabSoffit.toFixed(3) + ' m' : '') + '</text>');
     o.push('<text x="' + (W - 20) + '" y="' + y0 + '" font-family="sans-serif" font-size="11" fill="#8a94a6" text-anchor="end">' +
            new Date().toISOString().slice(0, 10) + ' · measured with RoomScan</text>');
 
@@ -3029,6 +3782,16 @@ window.RM = window.RM || {};
     rows.push(['Net wall area (m2)', st.wallArea.toFixed(3)]);
     rows.push(['Opening area (m2)', st.openingArea.toFixed(3)]);
     rows.push(['Volume (m3)', st.volume.toFixed(3)]);
+    if (st.thickness > 0) {
+      rows.push(['Wall thickness (m)', st.thickness.toFixed(3)]);
+      rows.push(['Area to structure (m2)', st.grossArea.toFixed(3)]);
+      rows.push(['Wall footprint (m2)', st.wallFootprint.toFixed(3)]);
+    }
+    if (st.ceilingVoid > 0) {
+      rows.push(['Ceiling void (m)', st.ceilingVoid.toFixed(3)]);
+      rows.push(['Slab soffit above FFL (m)', st.slabSoffit.toFixed(3)]);
+      rows.push(['Void volume (m3)', st.voidVolume.toFixed(3)]);
+    }
     rows.push([]);
     rows.push(['Wall', 'Length (m)', 'Height (m)', 'Gross area (m2)', 'Openings (m2)', 'Net area (m2)', 'Bearing (deg)', 'Length locked']);
     walls.forEach(function (w) {
@@ -3119,6 +3882,14 @@ window.RM = window.RM || {};
     if (!f) warn = 'Aiming above the horizon &mdash; there is no floor there. Aim lower.';
     else if (roll > 6) warn = 'Phone is tilted ' + roll.toFixed(0) + '&deg; sideways. Level it or the plan will skew.';
     else if (f.range > 15) warn = 'That point is ' + f.range.toFixed(1) + ' m away and close to the horizon &mdash; small aim errors become big distance errors.';
+    else {
+      var sens = scan.tiltSensitivity();
+      if (sens != null && sens > 120) {
+        warn = 'Weak sighting: 0.1&deg; of tilt error moves this ' +
+               (sens < 1000 ? sens.toFixed(0) + ' mm' : (sens / 1000).toFixed(2) + ' m') +
+               '. Step closer, or aim at a nearer corner.';
+      }
+    }
 
     if (n === 0) {
       return { step: 3, total: 4, act: 'Aim where the wall meets the floor, then Mark corner',
@@ -3136,6 +3907,34 @@ window.RM = window.RM || {};
   }
 
   function photoState() {
+    if (photo.mode === 'measure') {
+      var m = photo.measurement(), mw = photo.mWall;
+      if (m) {
+        return { act: RM.plan.fmt(m.dist) + '  \u2014  ' + m.ds.toFixed(3) + ' m wide, ' +
+                      m.dt.toFixed(3) + ' m tall',
+                 why: 'Heights are above finished floor level. If that is an opening, ' +
+                      '+ Door or + Window writes it straight onto wall ' + (mw + 1) +
+                      ' with the right offset, width, sill and head. Drag either point to adjust.',
+                 done: true };
+      }
+      return { act: 'Tap two points on the wall to measure',
+               why: 'This photo has been straightened, so it is a metric image of wall ' + (mw + 1) +
+                    ' \u2014 socket and switch heights, window positions, equipment sizes. ' +
+                    'Tap two opposite corners of an opening and it can be added to the model directly.' };
+    }
+    if (photo.mode === 'lens') {
+      var lc = photo.lineCount(), cur = photo.curLine().length, k1 = store.p.calib.k1;
+      return { act: lc >= 1 ? 'Solve lens, or trace another edge'
+                            : 'Trace a straight edge with 3+ taps' + (cur ? ' &mdash; ' + cur + ' placed' : ''),
+               why: 'Tap along anything you know is dead straight &mdash; a door frame, a tile joint, a skirting board. ' +
+                    'The number beside each edge is how far it bends in the photo; the app finds the lens coefficient that flattens it. ' +
+                    (lc >= 1 ? lc + ' usable edge(s) traced. ' : '') +
+                    (k1 ? 'Current k1 ' + k1.toFixed(4) + '.' : 'Not yet measured on this phone.') };
+    }
+    if (photo.mode === 'wall') {
+      return { step: 5, total: 5, act: 'Tap the wall&rsquo;s corners: BL, BR, TR, TL',
+               why: 'Bottom-left, bottom-right, top-right, top-left. Then pick which wall it is and the photo is straightened onto it.' };
+    }
     if (!photo.img) {
       return { step: 1, total: 5, act: 'Put a known object on the floor, then tap Photo',
                why: 'A4 sheet, floor tile, or a 1 m square of tape &mdash; flat on the floor, near the corners you care about. Shoot so the object and the floor corners are both in frame.' };
@@ -3152,14 +3951,14 @@ window.RM = window.RM || {};
     }
     if (photo.mode === 'ref') {
       var pr = photo.precisionAt({ x: photo.img.width / 2, y: photo.img.height * 0.75 });
+      var fit = photo.fit, extra = '';
+      if (fit) extra = 'Locked onto ' + fit.n + ' of ' + fit.tried + ' tile joints, fit ' + fit.rms.toFixed(1) + ' mm rms. ';
       return { step: 3, total: 5, act: 'Check the green grid lies flat on the floor',
-               why: 'It is 1 m squares. If it climbs a wall or skews, drag the reference corners until it settles. ' +
+               why: 'It is 1 m squares. If it climbs a wall or skews, drag the reference corners until it settles. ' + extra +
                     (pr ? 'Precision mid-frame: about ' + pr.toFixed(0) + ' mm per pixel. ' : '') +
-                    'Then press 2 &middot; Corners.' };
-    }
-    if (photo.mode === 'wall') {
-      return { step: 5, total: 5, act: 'Tap the wall&rsquo;s corners: BL, BR, TR, TL',
-               why: 'Bottom-left, bottom-right, top-right, top-left. Then pick which wall it is and the photo is straightened onto it.' };
+                    'Then press 2 &middot; Corners.',
+               warn: (fit && fit.rms > 8) ? 'Tile joints only fit to ' + fit.rms.toFixed(0) +
+                     ' mm &mdash; check the tile size you entered, or run the lens calibration.' : null };
     }
     var k = photo.corners.length;
     if (k < 3) {
@@ -3403,7 +4202,14 @@ window.RM = window.RM || {};
       'pitch <b>' + S.pitchDown().toFixed(1) + '°</b> · roll <b>' + S.roll().toFixed(1) + '°</b> · ' +
       'h <b>' + c.camH.toFixed(2) + ' m</b> · fov <b>' + (scan.fovDeg() ? scan.fovDeg().toFixed(0) : '?') + '°</b>' +
       (c.verified ? ' <span class="badge ok">cal</span>' : ' <span class="badge warn">uncal</span>') +
+      (c.k1 ? ' <span class="badge">lens</span>' : '') +
       (scan.stationIdx ? ' · spot ' + (scan.stationIdx + 1) : '');
+    var sens = scan.tiltSensitivity();
+    if (sens != null) {
+      $('scanHud').innerHTML += '<br>0.1° tilt = <b>' +
+        (sens < 1000 ? sens.toFixed(0) + ' mm' : (sens / 1000).toFixed(2) + ' m') +
+        '</b> here · ' + S.sampleCount() + ' samples avg';
+    }
   }
   setInterval(function () {
     if (scan.running && view === 'scan') { hud(); RM.coach.render('scan'); }
@@ -3459,6 +4265,11 @@ window.RM = window.RM || {};
       '<button id="cAdd" style="flex:1">Capture sighting</button></div>' +
       '<div class="hint" id="cCount">' + scan.calibSamples.length + ' sighting(s) captured</div>' +
       '<button class="primary" id="cSolve2" style="width:100%;margin-top:8px">Solve both</button></div>' +
+      '<div class="card"><h3>C · Lens distortion</h3>' +
+      '<p class="hint" style="margin-top:0">A homography assumes a pinhole camera; a phone wide-angle is not one, and floor corners sit near the frame edge where it is worst. ' +
+      'Photograph any straight edge, trace it with 3+ taps, and the app solves the coefficient. Once per phone.</p>' +
+      '<div class="hint mono">k1 ' + (c.k1 ? c.k1.toFixed(4) + (c.k1res != null ? '  residual ' + c.k1res + ' px' : '') : 'not measured') + '</div>' +
+      '<button id="cLens" style="width:100%;margin-top:8px">Open lens calibration</button></div>' +
       '<div class="card"><h3>Current</h3><div class="hint mono">fRel ' + c.fRel.toFixed(4) +
       ' · FOV ' + (c.fovDeg || (scan.fovDeg() || 0).toFixed(1)) + '° · height ' + c.camH.toFixed(3) + ' m · ' +
       (c.verified ? '<span class="badge ok">calibrated</span>' : '<span class="badge warn">defaults</span>') + '</div></div>' +
@@ -3476,6 +4287,14 @@ window.RM = window.RM || {};
           var n = scan.addCalibSample(parseFloat($('cD2').value));
           $('cCount').textContent = n + ' sighting(s) captured';
           toast('Sighting ' + n + ' captured');
+        };
+        $('cLens').onclick = function () {
+          closeSheet();
+          setView('photo');
+          setPhotoMode('lens');
+          if (!photo.lines.length) photo.newLine();
+          toast(photo.img ? 'Trace a straight edge with 3+ taps'
+                          : 'Take a photo containing a long straight edge', 5000);
         };
         $('cSolve2').onclick = function () {
           var r = scan.solveTwoPoint();
@@ -3553,6 +4372,10 @@ window.RM = window.RM || {};
     $('mRef').className = m === 'ref' ? 'blue' : '';
     $('mCorners').className = m === 'corners' ? 'blue' : '';
     $('mWall').className = m === 'wall' ? 'blue' : '';
+    $('mLens').className = m === 'lens' ? 'blue' : '';
+    $('lensActions').hidden = m !== 'lens';
+    $('measureActions').hidden = m !== 'measure';
+    $('photoActions').hidden = (m === 'lens' || m === 'measure');
     RM.coach.render('photo');
     if (m === 'wall' && photo.wallQuad.length === 4) applyWallUI();
   }
@@ -3563,6 +4386,36 @@ window.RM = window.RM || {};
     setPhotoMode('corners');
   });
   $('mWall').addEventListener('click', function () { setPhotoMode('wall'); });
+  $('mLens').addEventListener('click', function () {
+    setPhotoMode('lens');
+    if (!photo.lines.length) photo.newLine();
+  });
+  $('btnLensLine').addEventListener('click', function () {
+    photo.newLine();
+    toast('Tracing edge ' + (photo.lineIdx + 1) + ' - tap 3+ points along it');
+  });
+  $('btnLensClear').addEventListener('click', function () { photo.clearLines(); toast('Cleared'); });
+  $('btnLensSolve').addEventListener('click', function () {
+    var r = photo.solveLens();
+    toast(r.msg, r.ok ? 6000 : 4000);
+    RM.coach.render('photo');
+  });
+  $('btnPhotoUndo2').addEventListener('click', function () { photo.undoPoint(); });
+
+  /* tile-count multiplier: the same four taps over a much bigger reference */
+  function readTiles() {
+    photo.cols = Math.max(1, Math.min(8, parseInt($('gCols').value, 10) || 1));
+    photo.rows = Math.max(1, Math.min(8, parseInt($('gRows').value, 10) || 1));
+    $('gCols').value = photo.cols; $('gRows').value = photo.rows;
+    if (photo.ref.length === 4) photo.solve();
+    RM.coach.render('photo');
+    if (photo.cols > 1 || photo.rows > 1) {
+      toast('Reference is now ' + (photo.refW * photo.cols).toFixed(3) + ' x ' +
+            (photo.refH * photo.rows).toFixed(3) + ' m - tap the OUTER corners of the block', 4000);
+    }
+  }
+  $('gCols').addEventListener('change', readTiles);
+  $('gRows').addEventListener('change', readTiles);
   $('btnPhotoUndo').addEventListener('click', function () { photo.undoPoint(); });
 
   photo.onchange = function () { RM.coach.render('photo'); };
@@ -3600,14 +4453,40 @@ window.RM = window.RM || {};
           setTimeout(function () {
             var d = photo.rectifyWall(w.len, store.p.height, 1024);
             if (!d) { toast('Could not rectify — re-tap the wall corners'); return; }
-            store.setWallTex(i, d);
+            store.setWallTex(i, d, { len: w.len, h: store.p.height });
             closeSheet();
             need3d = true;
-            toast('Wall ' + (i + 1) + ' textured');
+            toast('Wall ' + (i + 1) + ' textured \u2014 open it from the Plan tab to measure on it', 4500);
           }, 30);
         };
       });
   }
+
+  /* ---------- measuring on a rectified wall photo ---------- */
+  function openWallMeasure(wallIdx) {
+    photo.loadWallMeasure(wallIdx).then(function (meta) {
+      setView('photo');
+      setPhotoMode('measure');
+      toast('Wall ' + (wallIdx + 1) + ': ' + meta.len.toFixed(2) + ' x ' + meta.h.toFixed(2) +
+            ' m. Tap two points to measure.', 4500);
+    }).catch(function (e) {
+      toast(e.message || String(e), 4000);
+    });
+  }
+  window.RMopenWallMeasure = openWallMeasure;
+
+  $('btnMeasClear').addEventListener('click', function () {
+    photo.mPts = [];
+    photo.draw();
+    RM.coach.render('photo');
+  });
+  ['btnMeasDoor', 'btnMeasWin'].forEach(function (id) {
+    $(id).addEventListener('click', function () {
+      var r = photo.openingFromMeasure(id === 'btnMeasDoor' ? 'door' : 'window');
+      toast(r.msg, r.ok ? 3000 : 3500);
+      if (r.ok) { need3d = true; RM.coach.render('photo'); }
+    });
+  });
 
   /* ================= PLAN ================= */
   plan.onselect = function (sel) {
@@ -3620,7 +4499,8 @@ window.RM = window.RM || {};
       box.innerHTML = '<b>Wall ' + (sel.i + 1) + '</b> · ' + w.angle.toFixed(1) + '°' +
         '<div class="row"><input id="edLen" type="number" step="0.001" value="' + w.len.toFixed(3) + '">' +
         '<button id="edSet" class="blue">Set</button><button id="edLock">' + (w.locked ? '🔒' : '🔓') + '</button></div>' +
-        '<div class="row"><button id="edIns">+ point</button><button id="edOpen">+ opening</button></div>';
+        '<div class="row"><button id="edIns">+ point</button><button id="edOpen">+ opening</button>' +
+        (w.tex ? '<button id="edMeas" class="blue">measure photo</button>' : '') + '</div>';
       $('edSet').onclick = function () {
         store.setEdgeLength(sel.i, parseFloat($('edLen').value));
         toast('Wall ' + (sel.i + 1) + ' set to ' + $('edLen').value + ' m and locked');
@@ -3632,6 +4512,7 @@ window.RM = window.RM || {};
         toast('Point inserted');
       };
       $('edOpen').onclick = function () { openingSheet(sel.i); };
+      if ($('edMeas')) $('edMeas').onclick = function () { openWallMeasure(sel.i); };
     } else {
       box.innerHTML = '<b>Corner ' + (sel.i + 1) + '</b> · ' + M.vertexAngle(store.p.points, sel.i).toFixed(1) + '°' +
         '<div class="row"><button id="vDel" class="danger">Delete</button></div>';
@@ -3772,7 +4653,7 @@ window.RM = window.RM || {};
     need3d = false;
   }
 
-  [['tCeil', 'ceiling'], ['tTex', 'tex'], ['tEdge', 'edges'], ['tGrid', 'grid']].forEach(function (t) {
+  [['tCeil', 'ceiling'], ['tTex', 'tex'], ['tEdge', 'edges'], ['tGrid', 'grid'], ['tVoid', 'voids']].forEach(function (t) {
     $(t[0]).addEventListener('change', function () {
       if (!viewer) return;
       viewer.show[t[1]] = this.checked;
@@ -3797,12 +4678,18 @@ window.RM = window.RM || {};
     $('fHeight').value = p.height;
     $('fUnits').value = p.units;
     $('fCamH').value = p.calib.camH;
+    $('fThick').value = p.thickness || '';
+    $('fVoid').value = p.ceilingVoid || '';
     $('fNotes').value = p.notes || '';
     $('statBox').innerHTML =
       stat('Floor area', st.area.toFixed(2), 'm²') +
       stat('Perimeter', st.perimeter.toFixed(2), 'm') +
       stat('Net wall area', st.wallArea.toFixed(2), 'm²') +
-      stat('Volume', st.volume.toFixed(2), 'm³');
+      stat('Volume', st.volume.toFixed(2), 'm³') +
+      (st.thickness > 0 ? stat('To structure', st.grossArea.toFixed(2), 'm²') +
+                          stat('Wall footprint', st.wallFootprint.toFixed(2), 'm²') : '') +
+      (st.ceilingVoid > 0 ? stat('Slab soffit', st.slabSoffit.toFixed(3), 'm') +
+                            stat('Void volume', st.voidVolume.toFixed(2), 'm³') : '');
     var walls = store.wallList();
     $('wallTbl').innerHTML = walls.length
       ? '<tr><th>Wall</th><th class="num">Length</th><th class="num">Net area</th><th class="num">Bearing</th><th>Openings</th></tr>' +
@@ -3813,6 +4700,23 @@ window.RM = window.RM || {};
         }).join('')
       : '<tr><td class="hint">No walls yet</td></tr>';
     renderSlots();
+    var off = window.RMoffline || { state: 'unsupported', detail: '' };
+    var cls = { ready: 'ok', pending: 'warn', error: 'bad', disabled: 'warn', unsupported: '' }[off.state] || '';
+    var label = {
+      ready: 'Works offline', pending: 'Caching…', error: 'Offline caching failed',
+      disabled: 'Offline caching removed', unsupported: 'No offline caching'
+    }[off.state] || off.state;
+    var el = $('offlineBox');
+    if (el) {
+      el.innerHTML = '<span class="badge ' + cls + '">' + label + '</span> <span class="hint" style="margin:0">' +
+        esc(off.detail || '') + '</span>' +
+        (off.state === 'unsupported' && !S.secure
+          ? '<p class="hint">Offline caching needs an https:// page. On GitHub Pages it works; opening the file directly does not.</p>'
+          : '') +
+        (off.state === 'ready'
+          ? '<p class="hint">Add this page to your home screen and it opens full-screen and works with no signal.</p>'
+          : '');
+    }
   }
   function stat(k, v, u) {
     return '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + ' <small>' + u + '</small></div></div>';
@@ -3826,6 +4730,20 @@ window.RM = window.RM || {};
     if (v > 0.2 && v < 2.6) { store.p.calib.camH = v; store.emit('calib'); }
   });
   $('fNotes').addEventListener('change', function () { store.p.notes = this.value; store.emit('notes'); });
+  $('fThick').addEventListener('change', function () {
+    var v = parseFloat(this.value);
+    store.snapshot();
+    store.p.thickness = (isFinite(v) && v > 0) ? M.round(v, 4) : 0;
+    need3d = true; store.emit('thickness'); refreshOut(); plan.draw();
+    toast(store.p.thickness ? 'Wall thickness ' + (store.p.thickness * 1000).toFixed(0) + ' mm' : 'Single-line walls');
+  });
+  $('fVoid').addEventListener('change', function () {
+    var v = parseFloat(this.value);
+    store.snapshot();
+    store.p.ceilingVoid = (isFinite(v) && v > 0) ? M.round(v, 4) : 0;
+    need3d = true; store.emit('void'); refreshOut();
+    toast(store.p.ceilingVoid ? 'Slab soffit at ' + (store.p.height + store.p.ceilingVoid).toFixed(3) + ' m' : 'No ceiling void');
+  });
 
   function guard(fn) {
     try { fn(); } catch (e) { toast(e.message || String(e), 4500); }
@@ -3853,6 +4771,7 @@ window.RM = window.RM || {};
     rd.onload = function () {
       try {
         store.importJSON(rd.result);
+        store.keepDeviceCalib();
         need3d = true; plan.fit(); refreshOut();
         toast('Loaded ' + store.p.name);
       } catch (er) { toast(er.message, 4000); }
@@ -3919,6 +4838,44 @@ window.RM = window.RM || {};
   if (store.p.points.length) plan.fit();
   $('pOrtho').style.color = '#39d0a8';
 
+})();
+</script>
+<script>
+/* Offline support. Needs a secure page (https:// or localhost) and is simply absent
+   otherwise. The app reports its own state on the Export tab so it can be checked on
+   the device that matters, and ?nosw=1 removes it if it ever misbehaves. */
+window.RMoffline = { state: 'unsupported', detail: 'not a secure page' };
+(function () {
+  var secure = location.protocol === 'https:' || location.hostname === 'localhost' ||
+               location.hostname === '127.0.0.1';
+  if (!('serviceWorker' in navigator)) {
+    window.RMoffline = { state: 'unsupported', detail: 'browser has no service worker support' };
+    return;
+  }
+  if (/[?&]nosw=1/.test(location.search)) {
+    window.RMoffline = { state: 'disabled', detail: 'removed by ?nosw=1' };
+    navigator.serviceWorker.getRegistrations().then(function (rs) {
+      rs.forEach(function (r) { r.unregister(); });
+    });
+    if (window.caches) caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
+    return;
+  }
+  if (!secure) return;
+  window.RMoffline = { state: 'pending', detail: 'registering' };
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').then(function () {
+      return navigator.serviceWorker.ready;
+    }).then(function () {
+      return window.caches ? caches.keys() : [];
+    }).then(function (keys) {
+      if (!keys.length) { window.RMoffline = { state: 'pending', detail: 'cache still filling' }; return; }
+      return caches.open(keys[0]).then(function (c) { return c.keys(); }).then(function (reqs) {
+        window.RMoffline = { state: 'ready', detail: reqs.length + ' files cached' };
+      });
+    }).catch(function (e) {
+      window.RMoffline = { state: 'error', detail: String((e && e.message) || e).slice(0, 120) };
+    });
+  });
 })();
 </script>
 </body>
